@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JutsoVPN · Админ</title>
+  <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/sendvpn/admin.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/sendvpn/admin.js" defer></script>
+</head>
+<body>
+  <div class="admin-loading" id="adminLoading">
+    <div class="admin-loading-brand">JUTSOVPN · ADMIN</div>
+    <div class="admin-loading-bar"><div></div></div>
+    <div class="admin-loading-status" id="adminLoadingStatus">Проверяем доступ…</div>
+  </div>
+
+  <div class="admin-shell hidden" id="adminShell">
+    <header class="admin-topbar">
+      <div class="admin-brand">
+        <span class="admin-brand-dot"></span>
+        <span>JUTSOVPN<span class="admin-brand-accent">·ADMIN</span></span>
+      </div>
+      <button class="admin-nav-toggle" id="adminNavToggle" type="button" aria-label="Меню">≡</button>
+      <nav class="admin-nav" id="adminNav">
+        <button data-section="dashboard" class="active" type="button">Дашборд</button>
+        <button data-section="users" type="button">Пользователи</button>
+        <button data-section="payments" type="button">Платежи</button>
+        <button data-section="analytics" type="button">Аналитика</button>
+        <button data-section="events" type="button">События</button>
+        <button data-section="promos" type="button">Промокоды</button>
+        <button data-section="broadcasts" type="button">Рассылка</button>
+        <button data-section="tariffs" type="button">Тарифы</button>
+        <button data-section="config" type="button">Конфиг</button>
+        <button data-section="tools" type="button">Инструменты</button>
+        <button data-section="backup" type="button">Бэкап</button>
+        <button data-section="log" type="button">Журнал</button>
+      </nav>
+      <div class="admin-actor" id="adminActor">—</div>
+    </header>
+
+    <main class="admin-content">
+      <!-- Dashboard -->
+      <section class="admin-section" data-section="dashboard">
+        <div class="admin-section-head">
+          <h1>Дашборд</h1>
+          <button class="admin-btn ghost" id="dashRefresh" type="button">Обновить</button>
+        </div>
+        <div class="kpi-grid" id="kpiGrid"></div>
+        <div class="admin-card">
+          <h2>Быстрые действия</h2>
+          <div class="quick-actions">
+            <button class="admin-btn primary" data-quick="seed">Сгенерировать 5 demo-пользователей</button>
+            <button class="admin-btn" data-quick="goto-users">Перейти к пользователям →</button>
+            <button class="admin-btn" data-quick="goto-broadcast">Создать рассылку →</button>
+            <button class="admin-btn warn" data-quick="lock-toggle">Переключить блокировку сайта</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Users -->
+      <section class="admin-section hidden" data-section="users">
+        <div class="admin-section-head">
+          <h1>Пользователи</h1>
+          <div class="admin-section-actions">
+            <input class="admin-input" id="usersSearch" placeholder="Поиск по id / имени / username">
+            <button class="admin-btn ghost" id="usersRefresh" type="button">Обновить</button>
+          </div>
+        </div>
+        <div class="admin-card">
+          <div class="user-filters" id="userFilters">
+            <button class="admin-btn small filter-btn active" data-filter="all">Все</button>
+            <button class="admin-btn small filter-btn" data-filter="active">Активные</button>
+            <button class="admin-btn small filter-btn" data-filter="trial">Триал</button>
+            <button class="admin-btn small filter-btn" data-filter="banned">Забанены</button>
+            <button class="admin-btn small filter-btn" data-filter="expiring">Истекают &lt;3д</button>
+            <button class="admin-btn small filter-btn" data-filter="inactive">Неактивны</button>
+            <a class="admin-btn small ghost" href="/api/admin/users/export?format=csv">↓ CSV</a>
+            <a class="admin-btn small ghost" href="/api/admin/users/export?format=json">↓ JSON</a>
+          </div>
+          <div class="bulk-bar hidden" id="bulkBar">
+            <span class="bulk-count" id="bulkCount">0 выбрано</span>
+            <button class="admin-btn small primary" data-bulk="grant">+ N дней</button>
+            <button class="admin-btn small" data-bulk="balance-add">Баланс +N</button>
+            <button class="admin-btn small" data-bulk="balance-set">Баланс = N</button>
+            <button class="admin-btn small" data-bulk="regen">Обновить uuid</button>
+            <button class="admin-btn small warn" data-bulk="ban">Забанить</button>
+            <button class="admin-btn small" data-bulk="unban">Разбанить</button>
+            <button class="admin-btn small warn" data-bulk="revoke">Снять подписку</button>
+            <button class="admin-btn small danger" data-bulk="delete">Удалить</button>
+            <button class="admin-btn small ghost" data-bulk="clear">Очистить</button>
+          </div>
+          <div class="users-meta" id="usersMeta">—</div>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="usersSelectAll"></th>
+                  <th>Пользователь</th>
+                  <th>Тариф</th>
+                  <th>Дни</th>
+                  <th>Баланс</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="usersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Payments -->
+      <section class="admin-section hidden" data-section="payments">
+        <div class="admin-section-head">
+          <h1>Платежи</h1>
+          <div class="admin-section-actions">
+            <button class="admin-btn ghost" id="paymentsRefresh" type="button">Обновить</button>
+            <a class="admin-btn ghost" href="/api/admin/payments/export?format=csv">↓ CSV</a>
+            <a class="admin-btn ghost" href="/api/admin/payments/export?format=json">↓ JSON</a>
+          </div>
+        </div>
+        <div class="admin-card">
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Юзер</th>
+                  <th>Тариф</th>
+                  <th>Сумма</th>
+                  <th>Провайдер</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="paymentsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Broadcasts -->
+      <section class="admin-section hidden" data-section="broadcasts">
+        <div class="admin-section-head">
+          <h1>Рассылки</h1>
+          <button class="admin-btn ghost" id="broadcastsRefresh" type="button">Обновить</button>
+        </div>
+        <div class="admin-card">
+          <h2>Новая рассылка</h2>
+          <label class="admin-field">
+            <span>Кому</span>
+            <select id="broadcastTarget" class="admin-input">
+              <option value="all">Все пользователи</option>
+              <option value="active">Только с активной подпиской</option>
+              <option value="trial">Активировавшие пробный</option>
+            </select>
+          </label>
+          <label class="admin-field">
+            <span>Сообщение (поддерживает HTML)</span>
+            <textarea id="broadcastText" class="admin-input" rows="4" placeholder="Привет, &lt;b&gt;{name}&lt;/b&gt;…"></textarea>
+          </label>
+          <button class="admin-btn primary" id="broadcastSend" type="button">Отправить</button>
+        </div>
+        <div class="admin-card">
+          <h2>История</h2>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr><th>ID</th><th>Время</th><th>Цель</th><th>Получатели</th><th>Статус</th></tr>
+              </thead>
+              <tbody id="broadcastsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tariffs -->
+      <section class="admin-section hidden" data-section="tariffs">
+        <div class="admin-section-head">
+          <h1>Тарифы</h1>
+          <button class="admin-btn primary" id="tariffSave" type="button">Сохранить</button>
+        </div>
+        <div class="admin-card">
+          <div id="tariffEditor"></div>
+          <button class="admin-btn ghost" id="tariffAdd" type="button">+ Добавить тариф</button>
+        </div>
+      </section>
+
+      <!-- Config -->
+      <section class="admin-section hidden" data-section="config">
+        <div class="admin-section-head">
+          <h1>Конфиг сайта</h1>
+          <button class="admin-btn primary" id="configSave" type="button">Сохранить</button>
+        </div>
+        <div class="admin-card">
+          <label class="admin-field"><span>Имя бота</span><input id="cfgBot" class="admin-input"></label>
+          <label class="admin-field"><span>Канал (URL)</span><input id="cfgChannel" class="admin-input"></label>
+          <label class="admin-field"><span>Поддержка (URL)</span><input id="cfgSupport" class="admin-input"></label>
+          <label class="admin-field"><span>Цена доп. устройства, ₽</span><input id="cfgExtraDevice" class="admin-input" type="number"></label>
+          <label class="admin-field"><span>Дней пробного периода</span><input id="cfgTrialDays" class="admin-input" type="number"></label>
+          <label class="admin-field"><span>Бонус-дни за реферала</span><input id="cfgRefDays" class="admin-input" type="number"></label>
+          <label class="admin-field"><span>% с покупок реферала</span><input id="cfgRefPercent" class="admin-input" type="number"></label>
+          <fieldset class="admin-field admin-providers">
+            <legend>Провайдеры</legend>
+            <label><input type="checkbox" id="cfgProvSbp"> СБП</label>
+            <label><input type="checkbox" id="cfgProvCard"> Карта</label>
+            <label><input type="checkbox" id="cfgProvCrypto"> Крипта</label>
+            <label><input type="checkbox" id="cfgProvBalance"> Баланс</label>
+          </fieldset>
+          <label class="admin-field"><span>Сайт заблокирован</span><input id="cfgLocked" class="admin-input" type="checkbox" style="width:auto"></label>
+          <label class="admin-field"><span>Текст блокировки</span><input id="cfgLockMsg" class="admin-input"></label>
+        </div>
+        <div class="admin-card">
+          <h2>Stars · валюты</h2>
+          <label class="admin-field"><span>1 ⭐ → ₽ (для зачисления баланса)</span><input id="cfgStarsRub" class="admin-input" type="number" step="0.01"></label>
+          <label class="admin-field"><span>1 ⭐ → $ (для отображения)</span><input id="cfgStarsUsd" class="admin-input" type="number" step="0.001"></label>
+          <label class="admin-field"><span>1 ₽ → $ (курс отображения)</span><input id="cfgUsdRub" class="admin-input" type="number" step="0.001"></label>
+          <label class="admin-field"><span>Star-пакеты (через запятую)</span><input id="cfgStarsPacks" class="admin-input" placeholder="50,100,500,1000,2000"></label>
+        </div>
+      </section>
+
+      <!-- Tools / Maintenance -->
+      <section class="admin-section hidden" data-section="tools">
+        <div class="admin-section-head">
+          <h1>Инструменты</h1>
+        </div>
+        <div class="admin-card">
+          <h2>Обслуживание</h2>
+          <p class="admin-hint">Опасные действия — необратимы, выполняются ко всем юзерам сразу.</p>
+          <div class="quick-actions">
+            <button class="admin-btn warn" data-tool="clear-expired">Снять истёкшие подписки</button>
+            <button class="admin-btn warn" data-tool="regen-uuids">Регенерировать все sub-uuid</button>
+            <button class="admin-btn warn" data-tool="reset-trials">Сбросить все триалы</button>
+            <button class="admin-btn danger" data-tool="clear-payments">Очистить историю платежей</button>
+            <button class="admin-btn danger" data-tool="clear-broadcasts">Очистить рассылки</button>
+            <button class="admin-btn danger" data-tool="clear-log">Очистить журнал</button>
+          </div>
+        </div>
+        <div class="admin-card">
+          <h2>Системные эндпоинты</h2>
+          <div class="quick-actions">
+            <a class="admin-btn ghost" href="/api/admin/health" target="_blank">/api/admin/health</a>
+            <a class="admin-btn ghost" href="/api/admin/users/active" target="_blank">/users/active</a>
+            <a class="admin-btn ghost" href="/api/admin/users/banned" target="_blank">/users/banned</a>
+            <a class="admin-btn ghost" href="/api/admin/users/expiring?days=3" target="_blank">/users/expiring</a>
+            <a class="admin-btn ghost" href="/api/admin/users/inactive?days=14" target="_blank">/users/inactive</a>
+            <a class="admin-btn ghost" href="/api/admin/users/export?format=csv" target="_blank">/users/export.csv</a>
+            <a class="admin-btn ghost" href="/api/admin/payments/export?format=csv" target="_blank">/payments/export.csv</a>
+            <a class="admin-btn ghost" href="/api/admin/log/export" target="_blank">/log/export</a>
+            <button class="admin-btn ghost" data-tool="reveal-key">Показать internal API key</button>
+          </div>
+          <pre id="toolOutput" class="tool-output">—</pre>
+        </div>
+        <div class="admin-card">
+          <h2>Демо</h2>
+          <button class="admin-btn primary" data-tool="seed">Сгенерировать 5 demo-пользователей</button>
+        </div>
+
+        <div class="admin-card">
+          <h2>Тех-перерыв</h2>
+          <p class="admin-hint">Можно закрывать сайт и/или бота независимо. Указанное сообщение увидит пользователь.</p>
+          <label class="admin-field"><span>Сообщение перерыва</span><input id="maintMessage" class="admin-input" placeholder="Сейчас идёт обновление, попробуйте через 10 минут"></label>
+          <div class="quick-actions">
+            <button class="admin-btn warn" data-maint="site-on" type="button">Закрыть сайт</button>
+            <button class="admin-btn ghost" data-maint="site-off" type="button">Открыть сайт</button>
+            <button class="admin-btn warn" data-maint="bot-on" type="button">Закрыть бота</button>
+            <button class="admin-btn ghost" data-maint="bot-off" type="button">Открыть бота</button>
+            <button class="admin-btn danger" data-maint="all-on" type="button">Закрыть всё</button>
+            <button class="admin-btn primary" data-maint="all-off" type="button">Открыть всё</button>
+          </div>
+          <pre id="maintOutput" class="tool-output">—</pre>
+        </div>
+
+        <div class="admin-card">
+          <h2>Картинка «Пока пусто»</h2>
+          <p class="admin-hint">Показывается на главной экране в блоке устройств. PNG/JPG/WebP, до 2 МБ. Можно вставить URL или загрузить файл.</p>
+          <label class="admin-field"><span>URL картинки</span><input id="emptyImageUrl" class="admin-input" placeholder="https://…/image.png"></label>
+          <div class="quick-actions">
+            <button class="admin-btn primary" data-tool="empty-image-url" type="button">Сохранить URL</button>
+            <button class="admin-btn ghost" data-tool="empty-image-clear" type="button">Сбросить</button>
+            <label class="admin-btn ghost" style="cursor:pointer">
+              Загрузить файл
+              <input id="emptyImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            </label>
+          </div>
+          <div id="emptyImagePreview" class="tool-output">—</div>
+        </div>
+
+        <div class="admin-card">
+          <h2 style="color:#ff8b8b">Опасная зона</h2>
+          <p class="admin-hint">Действия применяются ко ВСЕМ пользователям. Подтверждение запрашивается отдельно.</p>
+          <div class="quick-actions">
+            <button class="admin-btn danger" data-tool="zero-balances" type="button">Обнулить балансы всем</button>
+            <button class="admin-btn danger" data-tool="revoke-subs" type="button">Снять все подписки</button>
+            <button class="admin-btn danger" data-tool="clear-devices" type="button">Удалить все устройства</button>
+            <button class="admin-btn danger" data-tool="unban-all" type="button">Разбанить всех</button>
+            <button class="admin-btn danger" data-tool="delete-non-admin" type="button">Удалить всех (кроме админов)</button>
+            <button class="admin-btn danger" data-tool="wipe-all" type="button">Полный wipe (юзеры/платежи/рассылки)</button>
+          </div>
+          <pre id="dangerOutput" class="tool-output">—</pre>
+        </div>
+      </section>
+
+      <!-- Analytics -->
+      <section class="admin-section hidden" data-section="analytics">
+        <div class="admin-section-head">
+          <h1>Аналитика</h1>
+          <button class="admin-btn ghost" id="analyticsRefresh" type="button">Обновить</button>
+        </div>
+        <div class="kpi-grid" id="analyticsKpi"></div>
+        <div class="admin-card">
+          <h2>Регистрации (последние 14 дней)</h2>
+          <div class="bar-chart" id="chartRegistrations"></div>
+        </div>
+        <div class="admin-card">
+          <h2>Платежи (последние 14 дней, ₽)</h2>
+          <div class="bar-chart" id="chartPayments"></div>
+        </div>
+        <div class="admin-card">
+          <h2>По тарифам</h2>
+          <div class="bar-chart" id="chartTariffs"></div>
+        </div>
+        <div class="admin-card">
+          <h2>Топ плательщики</h2>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead><tr><th>#</th><th>Юзер</th><th>Сумма</th><th>Платежей</th></tr></thead>
+              <tbody id="topSpendersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Events -->
+      <section class="admin-section hidden" data-section="events">
+        <div class="admin-section-head">
+          <h1>События</h1>
+          <div class="admin-section-actions">
+            <input class="admin-input" id="eventsTgId" placeholder="tg_id (опционально)">
+            <input class="admin-input" id="eventsType" placeholder="тип (опц.)">
+            <button class="admin-btn ghost" id="eventsRefresh" type="button">Обновить</button>
+            <button class="admin-btn warn" id="eventsClear" type="button">Очистить все</button>
+          </div>
+        </div>
+        <div class="admin-card">
+          <div class="users-meta" id="eventsMeta">—</div>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead><tr><th>Время</th><th>Юзер</th><th>Тип</th><th>Метка</th><th>Источник</th></tr></thead>
+              <tbody id="eventsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Promocodes -->
+      <section class="admin-section hidden" data-section="promos">
+        <div class="admin-section-head">
+          <h1>Промокоды</h1>
+          <button class="admin-btn ghost" id="promosRefresh" type="button">Обновить</button>
+        </div>
+        <div class="admin-card">
+          <h2>Создать промокод</h2>
+          <label class="admin-field"><span>Код (пусто = автогенерация)</span><input id="promoCode" class="admin-input" placeholder="WELCOME"></label>
+          <label class="admin-field">
+            <span>Тип бонуса</span>
+            <select id="promoKind" class="admin-input">
+              <option value="balance">+ Баланс ₽</option>
+              <option value="stars">+ Stars ⭐</option>
+              <option value="days">+ Дней подписки</option>
+            </select>
+          </label>
+          <label class="admin-field"><span>Значение</span><input id="promoValue" class="admin-input" type="number" value="100"></label>
+          <label class="admin-field"><span>Лимит активаций (0 = ∞)</span><input id="promoLimit" class="admin-input" type="number" value="0"></label>
+          <label class="admin-field"><span>Срок (дней, 0 = бессрочно)</span><input id="promoExpires" class="admin-input" type="number" value="0"></label>
+          <label class="admin-field"><span>Заметка</span><input id="promoNote" class="admin-input" placeholder="например: для канала"></label>
+          <button class="admin-btn primary" id="promoCreate" type="button">Создать</button>
+        </div>
+        <div class="admin-card">
+          <h2>Существующие</h2>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead><tr><th>Код</th><th>Тип</th><th>Значение</th><th>Использовано</th><th>Лимит</th><th>Истекает</th><th>Заметка</th><th></th></tr></thead>
+              <tbody id="promosTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Backup -->
+      <section class="admin-section hidden" data-section="backup">
+        <div class="admin-section-head">
+          <h1>Бэкап</h1>
+        </div>
+        <div class="admin-card">
+          <h2>Экспорт</h2>
+          <p class="admin-hint">Снимок всего in-memory состояния (юзеры, платежи, рассылки, промокоды, конфиг). Скачать как JSON.</p>
+          <div class="quick-actions">
+            <button class="admin-btn primary" id="backupExport" type="button">Скачать снапшот</button>
+            <a class="admin-btn ghost" href="/api/admin/backup/export" target="_blank">Открыть JSON в браузере</a>
+          </div>
+        </div>
+        <div class="admin-card">
+          <h2>Импорт</h2>
+          <p class="admin-hint">Загрузите ранее экспортированный JSON. ВНИМАНИЕ: перезапишет существующие данные.</p>
+          <label class="admin-btn ghost" style="cursor:pointer">
+            Выбрать файл…
+            <input id="backupImportFile" type="file" accept="application/json,.json" hidden>
+          </label>
+          <pre id="backupOutput" class="tool-output">—</pre>
+        </div>
+      </section>
+
+      <!-- Log -->
+      <section class="admin-section hidden" data-section="log">
+        <div class="admin-section-head">
+          <h1>Журнал действий</h1>
+          <button class="admin-btn ghost" id="logRefresh" type="button">Обновить</button>
+        </div>
+        <div class="admin-card">
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr><th>Время</th><th>Админ</th><th>Действие</th><th>Цель</th><th>Данные</th></tr>
+              </thead>
+              <tbody id="logTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- User detail drawer -->
+  <div class="admin-drawer hidden" id="userDrawer">
+    <div class="admin-drawer-card">
+      <div class="admin-drawer-head">
+        <div>
+          <div class="admin-drawer-name" id="drawerName">—</div>
+          <div class="admin-drawer-id" id="drawerId">—</div>
+        </div>
+        <button class="admin-btn ghost" id="drawerClose" type="button">×</button>
+      </div>
+      <div class="admin-drawer-body" id="drawerBody"></div>
+    </div>
+  </div>
+
+  <div class="admin-toast" id="adminToast"></div>
+</body>
+</html>

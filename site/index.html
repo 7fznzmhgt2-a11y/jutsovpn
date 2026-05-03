@@ -1,0 +1,545 @@
+
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JutsoVPN</title>
+  <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Send VPN">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    // Strict Mini-App-only gate. Detect Telegram WebApp synchronously and
+    // expose it via <html data-env="…"> so CSS can hide everything except the
+    // auth gate before the main bundle even starts parsing. Prevents any
+    // flash of the dashboard for ordinary browser visitors.
+    (function () {
+      var tg = (window.Telegram && window.Telegram.WebApp) || null;
+      var inApp = !!(tg && tg.initData && tg.initData.length > 0);
+      document.documentElement.dataset.env = inApp ? "miniapp" : "browser";
+      if (inApp) document.documentElement.classList.add("env-miniapp");
+      else document.documentElement.classList.add("env-browser");
+    })();
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="loading-screen" id="loadingScreen">
+    <div class="loading-center">
+      <div class="loading-emoji" id="loadingEmoji"></div>
+      <div class="loading-brand">JUTSOVPN</div>
+      <div class="loading-subtitle" data-i18n="loading">Подготавливаем ваш кабинет</div>
+    </div>
+    <div class="loading-progress-wrap">
+      <div class="loading-progress-track">
+        <div class="loading-progress-fill" id="loadingProgressFill"></div>
+      </div>
+      <div class="loading-progress-text" id="loadingProgressText">0%</div>
+    </div>
+  </div>
+
+  <div class="app-shell app-hidden" id="appShell">
+    <header class="topbar">
+      <div class="brand-row">
+        <div class="brand" id="brandText">JUTSOVPN</div>
+        <button type="button" class="lang-toggle" id="langToggle" aria-label="Сменить язык" data-i18n-aria="aria_change_lang">
+          <span class="lang-toggle-current" id="langToggleCurrent">RU</span>
+        </button>
+      </div>
+      <div class="live-badge" id="liveBadge" aria-label="Статус подписки" data-i18n-aria="aria_sub_status">
+        <div id="liveBadgeEmoji"></div>
+      </div>
+    </header>
+
+    <main class="screen">
+      <section class="panel hero-panel" id="homeView">
+        <div class="hero-center">
+          <div class="hero-days" id="daysLeft">0</div>
+          <div class="hero-caption" data-i18n="hero_caption">Дней осталось</div>
+          <div class="hero-subcaption" id="untilDate" data-i18n="hero_no_sub">нет активной подписки</div>
+        </div>
+
+        <div class="hero-actions">
+          <button class="cta cta-primary" id="connectButton" type="button">
+            <span class="cta-icon"><div id="connectBtnEmoji"></div></span>
+            <span data-i18n="connect_oneclick">Подключить в 1 клик</span>
+          </button>
+          <button class="cta cta-secondary" id="copyButton" type="button">
+            <span class="cta-icon"><div id="copyBtnEmoji"></div></span>
+            <span data-i18n="copy_link">Скопировать ссылку</span>
+          </button>
+        </div>
+
+        <div class="cards-grid">
+          <article class="stat-card traffic-card">
+            <span class="label" data-i18n="traffic">Трафик</span>
+            <div class="traffic-row">
+              <strong id="trafficUsed">0 B</strong>
+              <span id="trafficLimit">/ ∞</span>
+            </div>
+          </article>
+        </div>
+
+        <section class="devices-section">
+          <div class="section-head devices-head">
+            <h2 data-i18n="devices_title">Устройства</h2>
+            <div class="counter-pill" id="deviceCounter">0 / ∞</div>
+          </div>
+          <div class="device-list" id="deviceList"></div>
+        </section>
+      </section>
+
+      <section class="panel tab-panel hidden" id="buyView">
+        <div class="section-head">
+          <h2 data-i18n="buy_title">Купить</h2>
+        </div>
+
+        <div class="buy-block">
+          <div class="plan-list" id="tariffList">
+            <article class="plan-card">
+              <div class="plan-top">
+                <div>
+                  <span class="label">ТАРИФ</span>
+                  <div class="plan-name">1 месяц</div>
+                </div>
+                <div class="plan-price">99 ₽</div>
+              </div>
+              <div class="plan-meta">30 дней · 3 устройства</div>
+              <div class="plan-actions">
+                <button class="cta cta-primary" data-tariff="1m">Купить</button>
+                <button class="cta cta-secondary" data-tariff="1m">Подарить</button>
+              </div>
+            </article>
+
+            <article class="plan-card is-featured">
+              <div class="plan-card-featured-badge"><div>⚡</div></div>
+              <div class="plan-top">
+                <div>
+                  <span class="label">ТАРИФ</span>
+                  <div class="plan-name">3 месяца</div>
+                </div>
+                <div class="plan-price">270 ₽</div>
+              </div>
+              <div class="plan-meta">90 дней · 4 устройства</div>
+              <div class="plan-actions">
+                <button class="cta cta-primary" data-tariff="3m">Купить</button>
+                <button class="cta cta-secondary" data-tariff="3m">Подарить</button>
+              </div>
+            </article>
+
+            <article class="plan-card">
+              <div class="plan-top">
+                <div>
+                  <span class="label">ТАРИФ</span>
+                  <div class="plan-name">6 месяцев</div>
+                </div>
+                <div class="plan-price">480 ₽</div>
+              </div>
+              <div class="plan-meta">180 дней · 5 устройств</div>
+              <div class="plan-actions">
+                <button class="cta cta-primary" data-tariff="6m">Купить</button>
+                <button class="cta cta-secondary" data-tariff="6m">Подарить</button>
+              </div>
+            </article>
+
+            <article class="plan-card">
+              <div class="plan-top">
+                <div>
+                  <span class="label">ТАРИФ</span>
+                  <div class="plan-name">1 год</div>
+                </div>
+                <div class="plan-price">870 ₽</div>
+              </div>
+              <div class="plan-meta">365 дней · 5 устройств</div>
+              <div class="plan-actions">
+                <button class="cta cta-primary" data-tariff="1y">Купить</button>
+                <button class="cta cta-secondary" data-tariff="1y">Подарить</button>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="buy-block device-buy-block">
+          <h3 data-i18n="devices_title">Устройства</h3>
+          <div id="devicePurchaseCard">
+            <article class="plan-card device-buy-card">
+              <div class="plan-top">
+                <div>
+                  <span class="label" data-i18n="device_extra">Доп.</span>
+                  <div class="plan-name" data-i18n="device_extra_name">устройство</div>
+                </div>
+                <div class="plan-price">40 ₽</div>
+              </div>
+              <div class="plan-meta">&nbsp;</div>
+              <div class="plan-actions">
+                <button class="cta cta-primary" data-i18n="buy">Купить</button>
+                <button class="cta cta-secondary" data-i18n="gift">Подарить</button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel tab-panel hidden" id="financeView">
+        <div class="section-head">
+          <h2 data-i18n="finance_title">Оплата</h2>
+        </div>
+
+        <div class="buy-block finance-section">
+          <article class="buy-card finance-card finance-balance-card">
+            <div class="finance-card-head">
+              <div class="finance-balance-block">
+                <span class="label" data-i18n="balance">Баланс</span>
+                <h3 id="financeBalanceValue">0 ₽</h3>
+              </div>
+            </div>
+          </article>
+
+          <article class="buy-card finance-card balance-topup-card">
+            <div class="finance-card-head">
+              <div>
+                <h3 data-i18n="topup_title">Пополнить баланс</h3>
+                <p data-i18n="topup_subtitle">Выберите сумму и удобный способ оплаты</p>
+              </div>
+            </div>
+            <form class="stack-form" id="balanceForm">
+              <input type="number" name="amount" min="10" max="50000" value="100" placeholder="Сумма" data-i18n-placeholder="placeholder_amount">
+              <div class="field-hint" data-i18n="topup_hint">Баланс можно пополнить от 10 ₽</div>
+              <button class="payment-collapse" id="balanceToggle" type="button">
+                <span data-i18n="payment_methods">Способы оплаты</span>
+                <span class="payment-collapse-icon" aria-hidden="true">
+                  <div id="balanceCollapseEmoji"></div>
+                </span>
+              </button>
+              <div class="payment-collapse-body" id="balanceCollapseBody">
+                <div class="payment-methods compact-methods" id="balanceProviderList">
+                  <button class="payment-method" type="button" data-provider="sbp">
+                    <span class="payment-method-label" data-i18n="method_sbp">СБП</span>
+                    <strong class="payment-method-meta" data-i18n="method_select">Выбрать</strong>
+                  </button>
+                  <button class="payment-method" type="button" data-provider="card">
+                    <span class="payment-method-label" data-i18n="method_card">Карта</span>
+                    <strong class="payment-method-meta" data-i18n="method_select">Выбрать</strong>
+                  </button>
+                  <button class="payment-method" type="button" data-provider="cryptobot">
+                    <span class="payment-method-label" data-i18n="method_cryptobot">CryptoBot</span>
+                    <strong class="payment-method-meta" data-i18n="method_select">Выбрать</strong>
+                  </button>
+                </div>
+              </div>
+              <button class="cta cta-primary" id="balancePayButton" type="submit" disabled data-i18n="topup_pay">Пополнить</button>
+              <button class="cta cta-secondary hidden" id="balanceCheckPaymentsButton" type="button" data-i18n="check_payment">Проверить оплату</button>
+            </form>
+          </article>
+
+          <article class="buy-card finance-card stars-card">
+            <div class="finance-card-head">
+              <div>
+                <h3 data-i18n="stars_title">Оплата Telegram Stars</h3>
+                <p data-i18n="stars_subtitle">Купите ⭐ через Telegram — баланс пополнится автоматически</p>
+              </div>
+            </div>
+            <div class="stars-grid" id="starsGrid"></div>
+            <div class="stars-status" id="starsStatus"></div>
+          </article>
+
+          <article class="buy-card finance-card promo-card">
+            <div class="finance-card-head">
+              <div>
+                <h3 data-i18n="promo_title">Активировать промокод</h3>
+                <p data-i18n="promo_subtitle">Введите код, бонус применяется сразу</p>
+              </div>
+            </div>
+            <form class="stack-form" id="promoForm">
+              <input type="text" name="code" placeholder="Введите код" data-i18n-placeholder="placeholder_promo">
+              <button class="cta cta-secondary" type="submit" data-i18n="apply">Применить</button>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel tab-panel hidden" id="profileView">
+        <div class="section-head">
+          <h2 data-i18n="profile_title">Профиль</h2>
+        </div>
+
+        <div class="profile-stack">
+          <div class="profile-header">
+            <div class="profile-avatar" id="profileAvatar" aria-hidden="true">G</div>
+            <div class="profile-info">
+              <h3 id="profileName">Профиль</h3>
+              <span class="role-id" id="roleBadge">user</span>
+            </div>
+          </div>
+
+          <article class="profile-card copy-card">
+            <div class="copy-header">
+              <span class="label" data-i18n="sub_link">Ссылка подписки</span>
+            </div>
+            <pre id="profileKey" data-i18n="sub_link_pending">Ключ пока не выдан</pre>
+          </article>
+
+          <article class="profile-card stats-list">
+            <div class="stat-row">
+              <span class="label label-plain" data-i18n="status">Статус</span>
+              <strong id="profileStatusValue">—</strong>
+            </div>
+            <div class="stat-row">
+              <span class="label label-plain" data-i18n="expires">Истекает</span>
+              <strong class="stat-value-gray" id="profileExpiresValue">—</strong>
+            </div>
+            <div class="stat-row">
+              <span class="label label-plain" data-i18n="traffic">Трафик</span>
+              <strong id="profileTrafficValue">—</strong>
+            </div>
+            <div class="stat-row">
+              <span class="label label-plain" data-i18n="telegram_id">Telegram ID</span>
+              <strong class="stat-value-gray" id="profileTelegramIdValue">—</strong>
+            </div>
+            <div class="stat-row">
+              <span class="label label-plain" data-i18n="login">Вход</span>
+              <strong id="profileLoginValue">—</strong>
+            </div>
+          </article>
+
+          <div class="profile-actions">
+            <button class="cta cta-secondary" id="referralsButton" type="button" data-i18n="referrals">Рефералы</button>
+            <button class="cta cta-secondary" id="pushPermissionButton" type="button" data-i18n="allow_notifications">Разрешить уведомления</button>
+            <button class="cta cta-secondary" id="settingsButton" type="button">
+              <span class="cta-icon"><div id="settingsBtnEmoji"></div></span>
+              <span data-i18n="settings">Настройки</span>
+            </button>
+            <button class="cta cta-secondary" id="supportButton" type="button" data-i18n="support">Поддержка</button>
+            <a class="cta cta-secondary legal-link" href="https://telegra.ph/Politika-konfidencialnosti-04-01-26" target="_blank" rel="noopener" data-i18n="legal_privacy_policy">Политика конфиденциальности</a>
+            <a class="cta cta-secondary legal-link" href="https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19" target="_blank" rel="noopener" data-i18n="legal_user_agreement">Пользовательское соглашение</a>
+            <button class="cta cta-secondary logout-button" id="logoutButton" type="button" data-i18n="logout">Выйти</button>
+          </div>
+
+        </div>
+      </section>
+    </main>
+
+    <section class="trial-gate hidden" id="trialGate" aria-live="polite">
+      <article class="trial-card">
+        <h2 data-i18n="trial_title">Получить 3 дня бесплатной подписки</h2>
+        <div class="trial-channel hidden" id="trialChannelBlock">
+          <div>
+            <strong data-i18n="trial_channel">Подпишитесь на канал</strong>
+            <p data-i18n="trial_channel_hint">После подписки вернитесь сюда и нажмите «Активировать».</p>
+          </div>
+          <button class="cta cta-secondary" id="trialChannelButton" type="button" data-i18n="open_channel">Открыть канал</button>
+        </div>
+        <button class="cta cta-primary" id="trialClaimButton" type="button" data-i18n="trial_claim">Получить</button>
+      </article>
+    </section>
+
+    <nav class="tabbar">
+      <button class="tabbar-item is-active" data-tab="home" type="button">
+        <span class="tabbar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M3.5 11.2 12 4l8.5 7.2"/><path d="M6 10.5V20h4.7v-5.3h2.6V20H18v-9.5"/></svg>
+        </span>
+        <span data-i18n="home_title">Главная</span>
+      </button>
+      <button class="tabbar-item" data-tab="buy" type="button">
+        <span class="tabbar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="m12 3.8 2.55 5.17 5.7.83-4.12 4.02.97 5.68L12 16.8l-5.1 2.68.98-5.68-4.13-4.02 5.7-.83z"/></svg>
+        </span>
+        <span data-i18n="buy_title">Купить</span>
+      </button>
+      <button class="tabbar-item" data-tab="finance" type="button">
+        <span class="tabbar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="6.5" width="17" height="11" rx="3"/><path d="M15.2 11.9h5.3"/><circle cx="15" cy="12" r="1.2"/></svg>
+        </span>
+        <span data-i18n="finance_title">Оплата</span>
+      </button>
+      <button class="tabbar-item" data-tab="profile" type="button">
+        <span class="tabbar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/></svg>
+        </span>
+        <span data-i18n="profile_title">Профиль</span>
+      </button>
+    </nav>
+  </div>
+
+  <section class="browser-auth-gate hidden" id="browserAuthGate" aria-live="polite">
+    <article class="browser-auth-panel">
+      <div class="auth-brand">JUTSOVPN</div>
+      <h1 data-i18n="auth_title">Откройте через бота</h1>
+      <p data-i18n="auth_lead">Личный кабинет JUTSOVPN работает только внутри Telegram Mini App. Откройте бота — он привяжет ваш профиль и синхронизирует подписку, баланс и устройства автоматически.</p>
+      <a class="auth-bot-link" id="telegramBotFallback" href="https://t.me/jutsovpnbot" target="_blank" rel="noopener" data-i18n="open_bot">Открыть бота</a>
+      <div class="auth-note" data-i18n="auth_note">Если вы уже в Telegram — нажмите /start у бота и кнопку «Открыть приложение».</div>
+      <div class="auth-legal">
+        <a href="https://telegra.ph/Politika-konfidencialnosti-04-01-26" target="_blank" rel="noopener" data-i18n="legal_privacy_policy">Политика конфиденциальности</a>
+        <span> · </span>
+        <a href="https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19" target="_blank" rel="noopener" data-i18n="legal_user_agreement">Пользовательское соглашение</a>
+      </div>
+    </article>
+  </section>
+
+  <section class="push-sheet hidden" id="pushSheet" aria-live="polite">
+    <article class="push-panel">
+      <div class="referral-kicker" data-i18n="push_kicker">Уведомления</div>
+      <h2 data-i18n="push_title">Будьте в курсе</h2>
+      <p data-i18n="push_text">Сайт сможет присылать уведомления о подарках, оплатах и окончании подписки.</p>
+      <div class="push-actions">
+        <button class="cta cta-primary" id="pushEnableButton" type="button" data-i18n="push_allow">Разрешить уведомления</button>
+        <button class="cta cta-secondary" id="pushLaterButton" type="button" data-i18n="push_later">Позже</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="notification-sheet hidden" id="notificationSheet" aria-live="polite">
+    <article class="notification-panel">
+      <button class="sheet-close" id="notificationCloseButton" type="button" aria-label="Закрыть" data-i18n-aria="aria_close">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="referral-kicker">JutsoVPN</div>
+      <h2 id="notificationTitle" data-i18n="notif_title">У вас непрочитанные сообщения</h2>
+      <div class="notification-list" id="notificationList"></div>
+      <button class="cta cta-secondary" id="notificationReadAllButton" type="button" data-i18n="notif_mark_read">Отметить прочитанным</button>
+    </article>
+  </section>
+
+  <div class="success-overlay hidden" id="successOverlay" role="dialog" aria-modal="true" aria-labelledby="successTitle">
+    <article class="success-card">
+      <div class="success-emoji" id="successEmoji"></div>
+      <h2 id="successTitle" data-i18n="success_title">Готово</h2>
+      <p id="successText" data-i18n="success_text_default">Операция выполнена успешно.</p>
+      <button class="cta cta-primary" id="successContinueButton" type="button" data-i18n="success_continue">Продолжить</button>
+    </article>
+  </div>
+  <div class="referral-sheet hidden" id="referralSheet" role="dialog" aria-modal="true" aria-labelledby="referralTitle">
+    <article class="referral-panel">
+      <button class="sheet-close" id="referralCloseButton" type="button" aria-label="Закрыть" data-i18n-aria="aria_close">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="referral-kicker" data-i18n="ref_kicker">Реферальная программа</div>
+      <h2 id="referralTitle" data-i18n="ref_title">Приглашайте друзей</h2>
+      <p class="referral-lead" data-i18n="ref_lead">Друг должен перейти по вашей ссылке, подписаться на канал и активировать бесплатный доступ.</p>
+
+      <div class="referral-stats-grid">
+        <div class="referral-stat">
+          <span data-i18n="ref_total">Всего приглашено</span>
+          <strong id="referralTotalValue">0</strong>
+        </div>
+        <div class="referral-stat">
+          <span data-i18n="ref_active">Активных</span>
+          <strong id="referralActiveValue">0</strong>
+        </div>
+        <div class="referral-stat referral-stat-wide">
+          <span data-i18n="ref_earned">Начислено с покупок</span>
+          <strong id="referralBonusValue">0 ₽</strong>
+        </div>
+      </div>
+
+      <div class="referral-rule">
+        <strong id="referralTrialRule">+4 дня за активного друга</strong>
+        <span id="referralPurchaseRule">20% с покупок реферала на баланс</span>
+      </div>
+
+      <div class="referral-link-card">
+        <span data-i18n="ref_link">Ваша ссылка</span>
+        <code id="referralLinkValue">—</code>
+      </div>
+
+      <div class="referral-actions">
+        <button class="cta cta-primary" id="referralShareButton" type="button" data-i18n="ref_share">Поделиться ссылкой</button>
+        <button class="cta cta-secondary" id="referralCopyButton" type="button" data-i18n="ref_copy">Скопировать</button>
+      </div>
+    </article>
+  </div>
+  <div class="gift-sheet hidden" id="giftSheet" role="dialog" aria-modal="true" aria-labelledby="giftTitle">
+    <article class="gift-panel">
+      <button class="sheet-close" id="giftCloseButton" type="button" aria-label="Закрыть" data-i18n-aria="aria_close">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="referral-kicker" data-i18n="gift_kicker">Подарочная подписка</div>
+      <h2 id="giftTitle" data-i18n="gift_title">Подарить доступ</h2>
+      <p class="referral-lead" id="giftLead" data-i18n="gift_lead">Выберите получателя или оставьте поле пустым, чтобы получить ссылку.</p>
+
+      <div class="gift-summary" id="giftSummary">—</div>
+      <div class="gift-device-chooser hidden" id="giftDeviceChooser">
+        <div class="device-count-panel">
+          <div class="range-output" id="giftDeviceCountOutput">1</div>
+          <div class="device-allowance" id="giftDeviceAllowance">1 × 40 ₽</div>
+        </div>
+        <input class="device-range" id="giftDeviceRange" type="range" min="1" max="7" value="1">
+      </div>
+      <div class="stack-form gift-form">
+        <label class="gift-field">
+          <span data-i18n="gift_recipient">Получатель</span>
+          <input type="text" id="giftRecipientInput" placeholder="Telegram ID или @username" data-i18n-placeholder="placeholder_gift_recipient">
+          <small data-i18n="gift_recipient_hint">Оставьте пустым, если нужна ссылка для друга.</small>
+        </label>
+        <div class="gift-recipient-lookup hidden" id="giftRecipientLookup" aria-live="polite"></div>
+        <label class="gift-field">
+          <span data-i18n="gift_message">Сообщение</span>
+          <textarea id="giftMessageInput" maxlength="240" rows="3" placeholder="Например: держи доступ, приятного просмотра" data-i18n-placeholder="placeholder_gift_message"></textarea>
+        </label>
+        <label class="gift-toggle gift-toggle-card">
+          <input type="checkbox" id="giftShowSenderInput" checked>
+          <span class="gift-toggle-box" aria-hidden="true"></span>
+          <span data-i18n="gift_show_name">Показать моё имя</span>
+        </label>
+      </div>
+      <div class="payment-methods gift-methods" id="giftProviderList"></div>
+      <button class="cta cta-primary" id="giftPayButton" type="button" data-i18n="gift_pay">Оплатить подарок</button>
+      <button class="cta cta-secondary hidden" id="giftCheckPaymentsButton" type="button" data-i18n="gift_check">Проверить оплату</button>
+      <div class="purchase-status" id="giftStatus" data-i18n="gift_status_default">После оплаты другу придёт уведомление или ссылка для активации.</div>
+    </article>
+  </div>
+  <div class="settings-sheet hidden" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <article class="settings-panel">
+      <button class="sheet-close" id="settingsCloseButton" type="button" aria-label="Закрыть" data-i18n-aria="aria_close">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="referral-kicker" data-i18n="settings_kicker">Безопасность</div>
+      <h2 id="settingsTitle" data-i18n="settings">Настройки</h2>
+      <p class="referral-lead" data-i18n="settings_lead">Управляйте сессией и синхронизацией данных Telegram.</p>
+
+      <div class="settings-group">
+        <strong data-i18n="settings_sessions">Сессии и устройства</strong>
+        <div class="settings-hint" data-i18n="settings_sessions_hint">Обновите профиль из Telegram или завершите все активные входы.</div>
+      </div>
+
+      <div class="stack-form settings-form">
+        <button class="cta cta-primary" id="refreshProfileButton" type="button" data-i18n="refresh_my_data">Обновить мои данные</button>
+        <button class="cta cta-secondary" id="logoutAllButton" type="button" data-i18n="logout_all">Выйти со всех устройств</button>
+      </div>
+
+      <div class="purchase-status" id="settingsStatus" data-i18n="settings_status_default">Здесь появится статус операции.</div>
+
+      <div class="settings-group">
+        <strong data-i18n="prefs_currency_title">Валюта</strong>
+        <div class="settings-hint" data-i18n="prefs_currency_subtitle">Выберите валюту, в которой показываются цены.</div>
+      </div>
+      <div class="prefs-row">
+        <div class="prefs-col">
+          <div class="prefs-buttons" data-prefs="currency">
+            <button class="prefs-btn" type="button" data-value="rub" data-i18n="prefs_currency_rub">Рубли · ₽</button>
+            <button class="prefs-btn" type="button" data-value="usd" data-i18n="prefs_currency_usd">Доллары · $</button>
+          </div>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+  <div class="tour-overlay hidden" id="tourOverlay" aria-live="polite">
+    <article class="tour-card">
+      <div class="tour-kicker" id="tourKicker">1 / 4</div>
+      <h2 id="tourTitle">Главная</h2>
+      <p id="tourText">Здесь видно подписку, трафик и подключенные устройства.</p>
+      <div class="tour-actions">
+        <button class="tour-skip" id="tourSkipButton" type="button" data-i18n="tour_skip">Пропустить</button>
+        <button class="cta cta-primary cta-small" id="tourNextButton" type="button" data-i18n="tour_next">Дальше</button>
+      </div>
+    </article>
+  </div>
+</body>
+</html>
