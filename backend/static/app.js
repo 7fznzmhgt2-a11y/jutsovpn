@@ -1791,7 +1791,11 @@ function renderHero() {
   const trafficLimit = isUnlimitedTraffic ? "∞" : formatTraffic(trafficLimitBytes);
 
   $("daysLeft").textContent = String(daysLeft);
-  $("untilDate").textContent = isActive ? `до ${subscription.expires_human || "—"}` : "нет активной подписки";
+  // Show expiry date whenever the backend says the subscription is still active,
+  // even if days_left rounded down to 0 (e.g. last day of a trial).
+  $("untilDate").textContent = subscription.has_subscription
+    ? `до ${subscription.expires_human || "—"}`
+    : (subscription.expires_human ? `истекла ${subscription.expires_human}` : "нет активной подписки");
   $("trafficUsed").textContent = trafficUsed;
   $("trafficLimit").textContent = `/ ${trafficLimit}`;
   if ($("trafficHint")) $("trafficHint").textContent = `${trafficUsed} использовано`;
@@ -1803,7 +1807,23 @@ function renderHero() {
   $("profileName").textContent = dashboard.profile?.name || "Профиль";
   $("roleBadge").textContent = dashboard.profile?.is_admin ? "admin" : "user";
   renderProfileAvatar();
-  $("profileKey").textContent = subscription.sub_url || "Ключ пока не выдан";
+  // Profile -> "Ссылка подписки": when no key issued yet, render the
+  // placeholder text itself as a clickable link to the /sub subscription
+  // page; otherwise show the raw subscription URL as plain text (so users
+  // can still long-press → copy).
+  const profileKeyEl = $("profileKey");
+  if (profileKeyEl) {
+    if (subscription.sub_url) {
+      profileKeyEl.textContent = subscription.sub_url;
+      profileKeyEl.dataset.subUrl = "1";
+    } else {
+      const subPagePath = state.config?.sub_page_url || "/sub";
+      const subPageUrl = /^https?:\/\//i.test(subPagePath) ? subPagePath : new URL(subPagePath, location.origin).toString();
+      const label = t("sub_link_pending") || "Ключ пока не выдан";
+      profileKeyEl.innerHTML = `<a class="profile-sub-link-pending" href="${escapeHtml(subPageUrl)}" target="_blank" rel="noopener" data-sub-page-link="true">${escapeHtml(label)}</a>`;
+      profileKeyEl.dataset.subUrl = "0";
+    }
+  }
   $("profileStatusValue").textContent = isActive ? "● Активна" : "● Неактивна";
   $("profileExpiresValue").textContent = subscription.expires_human || "—";
   $("profileTrafficValue").textContent = `${trafficUsed} / ${trafficLimit}`;
@@ -3225,6 +3245,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     toggleHeaderLanguage();
   });
 
+  // Profile -> "Ссылка подписки / Ключ пока не выдан" delegated handler.
+  // When the user taps the placeholder link (rendered into #profileKey
+  // when no sub_url is issued yet), open the /sub page through the
+  // Telegram WebApp so it stays inside the chat.
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-sub-page-link='true']") : null;
+    if (!target) return;
+    event.preventDefault();
+    const href = target.getAttribute("href") || (state.config?.sub_page_url || "/sub");
+    const url = /^https?:\/\//i.test(href) ? href : new URL(href, location.origin).toString();
+    if (!openExternalLink(url)) {
+      window.open(url, "_blank", "noopener");
+    }
+  });
+
   // Strict Mini-App-only gate: if we're in a regular browser, show the auth
   // screen immediately so the dashboard never flashes.
   if (!isTelegramWebApp()) {
@@ -3469,18 +3504,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderGiftSheet();
   });
 
-  $("supportButton").addEventListener("click", () => {
-    const supportLink = "https://t.me/sendvpn";
+  $("supportButton").addEventListener("click", (event) => {
+    const supportLink = state.config?.support_url || "https://t.me/jutsodev";
     const tg = window.Telegram?.WebApp;
     if (tg?.openTelegramLink && /^https?:\/\/t\.me\//i.test(supportLink)) {
+      event.preventDefault();
       tg.openTelegramLink(supportLink);
       return;
     }
     if (tg?.openLink) {
+      event.preventDefault();
       tg.openLink(supportLink);
-      return;
     }
-    window.open(supportLink, "_blank", "noopener");
+    // otherwise let the <a href> do its thing
   });
 
   const promoForm = $("promoForm");

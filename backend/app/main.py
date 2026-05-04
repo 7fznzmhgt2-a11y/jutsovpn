@@ -41,12 +41,94 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app = FastAPI()
 serializer = URLSafeSerializer(SESSION_SECRET, salt="sendvpn")
 
-# In-memory data stores (reset on each deploy / machine restart).
+# In-memory data stores (persisted to disk via STATE_FILE — see persist_state / load_state below).
 USERS: dict[int, dict[str, Any]] = {}
 PAYMENTS: list[dict[str, Any]] = []
 BROADCASTS: list[dict[str, Any]] = []
 ADMIN_LOG: list[dict[str, Any]] = []
 PROMOS: dict[str, dict[str, Any]] = {}  # code -> {kind,value,limit,used,expires_at,created_by,created_at,note}
+
+DATA_DIR = Path(os.environ.get("DATA_DIR") or "/data")
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    DATA_DIR = Path("/tmp")
+STATE_FILE = DATA_DIR / "state.json"
+_state_lock = asyncio.Lock() if False else None  # placeholder; we use sync writes
+_state_dirty = False
+
+
+def _persist_state_sync() -> None:
+    """Atomic JSON dump of all in-memory state. Best-effort."""
+    try:
+        snapshot = {
+            "version": 1,
+            "saved_at": int(time.time()),
+            "users": {str(k): v for k, v in USERS.items()},
+            "payments": PAYMENTS[-5000:],
+            "broadcasts": BROADCASTS[-2000:],
+            "promos": PROMOS,
+            "admin_log": ADMIN_LOG[-2000:],
+            "config_overrides": {k: CONFIG.get(k) for k in (
+                "tariffs", "providers",
+                "stars_rate_rub", "stars_rate_usd", "stars_packs",
+                "referral_trial_bonus_days", "referral_purchase_percent",
+                "extra_device_price", "trial_days", "site_locked", "site_locked_message",
+                "bot_locked", "bot_locked_message", "empty_image_url",
+                "channel_url", "support_url",
+                "bot_start_text", "bot_button_app", "bot_button_info", "bot_button_admin",
+                "bot_info_text", "bot_button_support", "bot_button_channel", "bot_button_back",
+            ) if k in CONFIG},
+        }
+        tmp = STATE_FILE.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(snapshot, f, ensure_ascii=False)
+        tmp.replace(STATE_FILE)
+    except Exception:
+        logger.exception("persist_state failed")
+
+
+def mark_dirty() -> None:
+    """Mark state as needing persistence; flushed by background task."""
+    global _state_dirty
+    _state_dirty = True
+
+
+def _load_state_sync() -> None:
+    """Load state from disk into in-memory stores. Best-effort."""
+    global USERS, PAYMENTS, BROADCASTS, PROMOS, ADMIN_LOG
+    try:
+        if not STATE_FILE.exists():
+            return
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            snap = json.load(f)
+        users = snap.get("users") or {}
+        if isinstance(users, dict):
+            for k, v in users.items():
+                try:
+                    USERS[int(k)] = v
+                except Exception:
+                    pass
+        payments = snap.get("payments")
+        if isinstance(payments, list):
+            PAYMENTS[:] = payments
+        broadcasts = snap.get("broadcasts")
+        if isinstance(broadcasts, list):
+            BROADCASTS[:] = broadcasts
+        promos = snap.get("promos")
+        if isinstance(promos, dict):
+            PROMOS.update(promos)
+        admin_log = snap.get("admin_log")
+        if isinstance(admin_log, list):
+            ADMIN_LOG[:] = admin_log
+        cfg_over = snap.get("config_overrides") or {}
+        if isinstance(cfg_over, dict):
+            for k, v in cfg_over.items():
+                if v is not None:
+                    CONFIG[k] = v
+        logger.info("state loaded: users=%d payments=%d promos=%d", len(USERS), len(PAYMENTS), len(PROMOS))
+    except Exception:
+        logger.exception("load_state failed")
 # Detailed per-user activity events (page views, taps, purchases). Capped per user.
 USER_EVENTS: dict[int, list[dict[str, Any]]] = {}
 USER_EVENTS_GLOBAL: list[dict[str, Any]] = []
@@ -56,7 +138,7 @@ APP_STARTED_AT: float = time.time()
 CONFIG: dict[str, Any] = {
     "bot_username": BOT_USERNAME,
     "channel_url": "https://t.me/jutsovpn",
-    "support_url": "https://t.me/jutsovpn_support",
+    "support_url": "https://t.me/jutsodev",
     "providers": {"sbp": True, "card": True, "crypto": False, "balance": True, "stars": True},
     "tariffs": [
         {"key": "m1", "name": "1 месяц", "days": 30, "devices": 3, "price_rub": 99, "price_stars": 66, "enabled": True},
@@ -80,13 +162,22 @@ CONFIG: dict[str, Any] = {
     "usd_rate_rub": 0.011,          # $1 ≈ 92 ₽ → 1 ₽ ≈ $0.011
     "stars_packs": [50, 100, 500, 1000, 2000],
     "stars_payload_secret": secrets.token_urlsafe(16),
+    # Bot UI strings — editable by admin via /admin in the bot. HTML allowed.
+    "bot_start_text": "<b>Ваш профиль:</b>\n<blockquote>Откройте приложение. Для подключения VPN.</blockquote>",
+    "bot_button_app": "📱 Открыть приложение",
+    "bot_button_info": "ℹ Информация",
+    "bot_button_admin": "🛠 Админ-панель",
+    "bot_info_text": "<b>Информация</b>\n<blockquote>JutsoVPN — быстрый и приватный VPN с подпиской через Telegram.</blockquote>",
+    "bot_button_support": "💬 Поддержка",
+    "bot_button_channel": "📢 Новостной канал",
+    "bot_button_back": "◀ Назад",
 }
 
 # Local in-memory image store: maps an opaque id -> (mime, bytes).
 UPLOADED_IMAGES: dict[str, tuple[str, bytes]] = {}
 
 # Internal-API key used by the bot to credit balances after successful payments.
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key-change-me")
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "sendvpn-internal-prod-2026-Tt7Lp9Qr")
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +534,8 @@ async def api_config() -> JSONResponse:
             "empty_image_url": CONFIG.get("empty_image_url") or "",
             "site_locked": bool(CONFIG.get("site_locked")),
             "site_locked_message": CONFIG.get("site_locked_message") or "",
+            "admin_ids": sorted(ADMIN_IDS),
+            "sub_page_url": CONFIG.get("sub_page_url") or "/sub",
         }
     )
 
@@ -745,6 +838,160 @@ async def api_internal_key(request: Request) -> JSONResponse:
     actor = admin_record(request)
     log_admin(actor["id"], "internal_key_view", None, None)
     return JSONResponse({"ok": True, "key": INTERNAL_API_KEY})
+
+
+_BOT_SETTINGS_STR_KEYS = (
+    "bot_start_text", "bot_button_app", "bot_button_info", "bot_button_admin",
+    "bot_info_text", "bot_button_support", "bot_button_channel", "bot_button_back",
+    "support_url", "channel_url",
+    "bot_locked_message",
+)
+_BOT_SETTINGS_BOOL_KEYS = ("bot_locked",)
+
+
+def _bot_settings_snapshot() -> dict[str, Any]:
+    snap: dict[str, Any] = {k: CONFIG.get(k, "") for k in _BOT_SETTINGS_STR_KEYS}
+    for k in _BOT_SETTINGS_BOOL_KEYS:
+        snap[k] = bool(CONFIG.get(k))
+    return snap
+
+
+@app.get("/api/internal/bot-settings")
+async def api_internal_bot_settings_get(request: Request) -> JSONResponse:
+    """Bot-only: read editable bot UI strings + toggles."""
+    if request.headers.get("x-internal-key") != INTERNAL_API_KEY:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    return JSONResponse({"ok": True, "settings": _bot_settings_snapshot()})
+
+
+@app.post("/api/internal/bot-settings")
+async def api_internal_bot_settings_set(request: Request) -> JSONResponse:
+    """Bot-only: update one or more editable bot UI strings / toggles."""
+    if request.headers.get("x-internal-key") != INTERNAL_API_KEY:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "bad_body"}, status_code=400)
+    updated: dict[str, Any] = {}
+    for k, v in body.items():
+        if k in _BOT_SETTINGS_STR_KEYS and isinstance(v, str):
+            CONFIG[k] = v
+            updated[k] = v
+        elif k in _BOT_SETTINGS_BOOL_KEYS:
+            CONFIG[k] = bool(v)
+            updated[k] = bool(v)
+    # Mirror the maintenance flag to the Mini App so toggling the bot also
+    # locks the site with the same message. One toggle covers both.
+    if "bot_locked" in updated:
+        CONFIG["site_locked"] = bool(updated["bot_locked"])
+        updated["site_locked"] = CONFIG["site_locked"]
+    if "bot_locked_message" in updated:
+        CONFIG["site_locked_message"] = updated["bot_locked_message"]
+        updated["site_locked_message"] = updated["bot_locked_message"]
+    mark_dirty()
+    return JSONResponse({"ok": True, "updated": updated, "settings": _bot_settings_snapshot()})
+
+
+@app.get("/api/internal/users")
+async def api_internal_users_list(request: Request, q: str = "", limit: int = 10, offset: int = 0) -> JSONResponse:
+    """Bot-only: paginated user list for the in-bot admin panel."""
+    if request.headers.get("x-internal-key") != INTERNAL_API_KEY:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    items = list(USERS.values())
+    if q:
+        ql = q.lower().strip()
+        items = [
+            u for u in items
+            if ql in str(u.get("id") or "")
+            or ql in (u.get("username") or "").lower()
+            or ql in (u.get("first_name") or "").lower()
+            or ql in (u.get("last_name") or "").lower()
+        ]
+    items.sort(key=lambda u: int(u.get("last_seen") or u.get("created_at") or 0), reverse=True)
+    total = len(items)
+    limit = max(1, min(50, int(limit or 10)))
+    offset = max(0, int(offset or 0))
+    page_items = items[offset : offset + limit]
+    return JSONResponse({"ok": True, "total": total, "limit": limit, "offset": offset, "items": [_user_summary(u) for u in page_items]})
+
+
+@app.get("/api/internal/users/{tg_id:int}")
+async def api_internal_user_detail(request: Request, tg_id: int) -> JSONResponse:
+    """Bot-only: full detail for one user."""
+    if request.headers.get("x-internal-key") != INTERNAL_API_KEY:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    record = USERS.get(int(tg_id))
+    if not record:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    summary = _user_summary(record)
+    summary["devices"] = list(record.get("devices") or [])
+    summary["referrals"] = list(record.get("referrals") or [])
+    summary["ref_code"] = record.get("ref_code") or ""
+    summary["referred_by"] = int(record.get("referred_by") or 0)
+    return JSONResponse({"ok": True, "user": summary})
+
+
+@app.post("/api/internal/users/{tg_id:int}/action")
+async def api_internal_user_action(request: Request, tg_id: int) -> JSONResponse:
+    """Bot-only: unified user action dispatcher (ban/unban/grant_days/...)."""
+    if request.headers.get("x-internal-key") != INTERNAL_API_KEY:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    action = str((body or {}).get("action") or "").strip()
+    record = USERS.get(int(tg_id))
+    if not record:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    actor_id = next(iter(ADMIN_IDS), 0)
+    if action == "ban":
+        record["banned"] = True
+    elif action == "unban":
+        record["banned"] = False
+    elif action == "revoke":
+        record["subscription"] = {}
+    elif action == "reset_trial":
+        record["free_used"] = False
+    elif action == "regen_sub":
+        record["sub_uuid"] = make_sub_uuid()
+    elif action == "clear_devices":
+        record["devices"] = []
+    elif action == "grant_days":
+        days = int(body.get("days") or 0)
+        if days <= 0:
+            return JSONResponse({"ok": False, "error": "days_required"}, status_code=400)
+        sub = record.get("subscription") or {}
+        base = max(int(sub.get("expires_at") or 0), int(time.time()))
+        record["subscription"] = {
+            **sub,
+            "expires_at": base + days * 86400,
+            "tariff_name": sub.get("tariff_name") or "Админ",
+            "tariff_total_days": int(sub.get("tariff_total_days") or 0) + days,
+            "devices_max": int(sub.get("devices_max") or 3),
+            "devices_active": int(sub.get("devices_active") or 0),
+            "traffic_used_bytes": int(sub.get("traffic_used_bytes") or 0),
+            "traffic_limit_bytes": int(sub.get("traffic_limit_bytes") or 0),
+        }
+    elif action == "balance_delta":
+        record["balance"] = int(record.get("balance") or 0) + int(body.get("delta") or 0)
+    elif action == "balance_set":
+        record["balance"] = int(body.get("value") or 0)
+    elif action == "stars_delta":
+        record["stars_balance"] = int(record.get("stars_balance") or 0) + int(body.get("delta") or 0)
+    elif action == "delete":
+        USERS.pop(int(tg_id), None)
+        log_admin(actor_id, "delete_via_bot", int(tg_id), {"by": "bot"})
+        mark_dirty()
+        return JSONResponse({"ok": True, "deleted": True})
+    else:
+        return JSONResponse({"ok": False, "error": "unknown_action"}, status_code=400)
+    log_admin(actor_id, f"bot_{action}", int(tg_id), body)
+    mark_dirty()
+    return JSONResponse({"ok": True, "user": _user_summary(record)})
 
 
 @app.get("/api/internal/user/{tg_id}")
@@ -3535,6 +3782,17 @@ async def sendvpn_file(filename: str) -> Response:
     return _serve_static(f"jutso/{filename}")
 
 
+@app.get("/sub")
+@app.get("/sub/")
+async def sub_index() -> Response:
+    return _serve_static("sub/index.html")
+
+
+@app.get("/sub/{filename:path}")
+async def sub_file(filename: str) -> Response:
+    return _serve_static(f"sub/{filename}")
+
+
 @app.get("/legal/offer")
 @app.get("/legal/offer/")
 async def legal_offer() -> Response:
@@ -3555,3 +3813,48 @@ async def legal_file(filename: str) -> Response:
 @app.get("/{filename}")
 async def root_file(filename: str) -> Response:
     return _serve_static(filename)
+
+
+# ---------------------------------------------------------------------------
+# Persistence: load on startup, flush periodically + on shutdown.
+# ---------------------------------------------------------------------------
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    _load_state_sync()
+
+    async def _flusher() -> None:
+        global _state_dirty
+        while True:
+            await asyncio.sleep(2.0)
+            if _state_dirty:
+                _state_dirty = False
+                _persist_state_sync()
+            else:
+                # Periodic safety flush every ~60s in case of missed mark_dirty
+                pass
+
+    async def _periodic_safety() -> None:
+        while True:
+            await asyncio.sleep(60.0)
+            _persist_state_sync()
+
+    asyncio.create_task(_flusher())
+    asyncio.create_task(_periodic_safety())
+
+
+@app.on_event("shutdown")
+async def _on_shutdown() -> None:
+    _persist_state_sync()
+
+
+@app.middleware("http")
+async def _persist_middleware(request: Request, call_next):
+    """Mark state dirty on any non-GET request so the flusher saves it within ~2s."""
+    response = await call_next(request)
+    try:
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            mark_dirty()
+    except Exception:
+        pass
+    return response

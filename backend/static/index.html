@@ -31,8 +31,76 @@
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
   <script src="app.js" defer></script>
+  <style>
+    /* Maintenance lock overlay — shown when /api/config returns site_locked. */
+    #maintenanceLock {
+      display: none;
+      position: fixed; inset: 0; z-index: 100000;
+      background: #090909; color: #fff;
+      padding: 32px 24px;
+      align-items: center; justify-content: center; text-align: center;
+      font-family: 'Montserrat', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    #maintenanceLock.show { display: flex; }
+    #maintenanceLock .ml-card { max-width: 460px; }
+    #maintenanceLock .ml-emoji { font-size: 56px; margin-bottom: 16px; }
+    #maintenanceLock .ml-brand { font-weight: 800; font-size: 14px; letter-spacing: 0.2em; opacity: 0.7; margin-bottom: 18px; }
+    #maintenanceLock .ml-text { font-size: 17px; line-height: 1.5; opacity: 0.92; }
+    #maintenanceLock .ml-text b { font-weight: 700; }
+    #maintenanceLock .ml-text blockquote { margin: 12px 0; padding-left: 14px; border-left: 3px solid rgba(255,255,255,0.25); opacity: 0.85; }
+    html.app-locked #loadingScreen,
+    html.app-locked #appShell,
+    html.app-locked #browserAuthGate { display: none !important; }
+  </style>
 </head>
 <body>
+  <div id="maintenanceLock" aria-live="polite">
+    <div class="ml-card">
+      <div class="ml-emoji">🛠</div>
+      <div class="ml-brand">JUTSOVPN</div>
+      <div class="ml-text" id="maintenanceLockText">Бот временно отключён и находится в стадии разработки.</div>
+    </div>
+  </div>
+  <script>
+    // Probe the maintenance flag before the main bundle renders anything.
+    // Admin bypass: if the current Telegram WebApp user (or ?admin=1 in the
+    // URL) is in the admin allowlist returned by /api/config, the lock
+    // overlay is suppressed so the admin can keep using the app.
+    (function () {
+      function getCurrentTgId() {
+        try {
+          var tg = (window.Telegram && window.Telegram.WebApp) || null;
+          var u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+          return u && u.id ? Number(u.id) : 0;
+        } catch (e) { return 0; }
+      }
+      function urlHasAdminParam() {
+        try {
+          return /(?:[?&])admin=1\b/.test(location.search);
+        } catch (e) { return false; }
+      }
+      try {
+        fetch("/api/config", { cache: "no-store" }).then(function (r) {
+          if (!r.ok) return;
+          return r.json();
+        }).then(function (cfg) {
+          if (!cfg) return;
+          var adminIds = Array.isArray(cfg.admin_ids) ? cfg.admin_ids.map(Number) : [];
+          var currentId = getCurrentTgId();
+          var isAdmin = (currentId && adminIds.indexOf(currentId) !== -1) || urlHasAdminParam();
+          if (cfg.site_locked && !isAdmin) {
+            var msg = (cfg.site_locked_message || "").trim()
+              || "🛠 <b>Бот временно отключён</b> и находится в стадии разработки.<br><blockquote>Зайдите чуть позже.</blockquote>";
+            msg = msg.replace(/\n/g, "<br>");
+            var el = document.getElementById("maintenanceLockText");
+            if (el) el.innerHTML = msg;
+            document.getElementById("maintenanceLock").classList.add("show");
+            document.documentElement.classList.add("app-locked");
+          }
+        }).catch(function () {});
+      } catch (e) {}
+    })();
+  </script>
   <div class="loading-screen" id="loadingScreen">
     <div class="loading-center">
       <div class="loading-emoji" id="loadingEmoji"></div>
@@ -318,7 +386,7 @@
               <span class="cta-icon"><div id="settingsBtnEmoji"></div></span>
               <span data-i18n="settings">Настройки</span>
             </button>
-            <button class="cta cta-secondary" id="supportButton" type="button" data-i18n="support">Поддержка</button>
+            <a class="cta cta-secondary" id="supportButton" href="https://t.me/jutsodev" target="_blank" rel="noopener" data-i18n="support">Поддержка</a>
             <a class="cta cta-secondary legal-link" href="https://telegra.ph/Politika-konfidencialnosti-04-01-26" target="_blank" rel="noopener" data-i18n="legal_privacy_policy">Политика конфиденциальности</a>
             <a class="cta cta-secondary legal-link" href="https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19" target="_blank" rel="noopener" data-i18n="legal_user_agreement">Пользовательское соглашение</a>
             <button class="cta cta-secondary logout-button" id="logoutButton" type="button" data-i18n="logout">Выйти</button>

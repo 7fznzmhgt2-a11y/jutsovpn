@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0d">
+  <meta name="robots" content="noindex, nofollow">
+  <title>JUTSOVPN — Подписка</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(60% 50% at 50% 0%, rgba(95, 70, 255, 0.18) 0%, rgba(95, 70, 255, 0) 60%),
+        radial-gradient(40% 60% at 90% 100%, rgba(255, 90, 180, 0.12) 0%, rgba(255, 90, 180, 0) 60%),
+        #0b0b0d;
+      color: #fff;
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px 48px;
+    }
+    .shell {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 22px;
+      letter-spacing: 0.18em;
+      color: #fff;
+      text-align: center;
+      padding-top: 8px;
+    }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #6c5cff 0%, #ff5aa6 100%);
+      box-shadow: 0 6px 18px rgba(108, 92, 255, 0.45);
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 22px;
+      padding: 22px 20px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .hero {
+      text-align: center;
+      padding: 28px 22px;
+    }
+    .hero-title {
+      margin: 0 0 8px;
+      font-weight: 800;
+      font-size: 26px;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+    .hero-sub {
+      margin: 0 auto;
+      max-width: 380px;
+      font-size: 14px;
+      line-height: 1.55;
+      color: rgba(255, 255, 255, 0.66);
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      margin-bottom: 16px;
+    }
+    .status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff7676;
+      box-shadow: 0 0 0 4px rgba(255, 118, 118, 0.18);
+    }
+    .status.active .dot {
+      background: #4ade80;
+      box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.2);
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .row .label {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.6);
+      flex: 0 0 auto;
+    }
+    .row .value {
+      font-weight: 600;
+      font-size: 14px;
+      text-align: right;
+      word-break: break-word;
+    }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: none;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.01em;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease, opacity 120ms ease;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: linear-gradient(135deg, #6c5cff 0%, #ff5aa6 100%);
+      color: #fff;
+      box-shadow: 0 10px 24px -8px rgba(108, 92, 255, 0.6);
+    }
+    .btn-primary:hover { opacity: 0.94; }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.1); }
+    .key-card {
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 14px;
+      font-family: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+      font-size: 12px;
+      color: #d6d6d6;
+      word-break: break-all;
+      white-space: pre-wrap;
+      max-height: 140px;
+      overflow: auto;
+    }
+    .key-card.empty { color: rgba(255, 255, 255, 0.45); font-style: italic; font-family: inherit; }
+    .footer {
+      text-align: center;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 4px;
+    }
+    .footer a { color: rgba(255, 255, 255, 0.7); text-decoration: none; }
+    .footer a:hover { color: #fff; text-decoration: underline; }
+    .copy-btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 120ms ease;
+    }
+    .copy-btn:hover { background: rgba(255, 255, 255, 0.12); }
+    @media (max-width: 360px) {
+      .hero-title { font-size: 22px; }
+      .row { flex-direction: column; align-items: flex-start; gap: 4px; }
+      .row .value { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>JUTSOVPN</span>
+    </div>
+
+    <article class="card hero">
+      <div class="status" id="subStatus"><span class="dot"></span><span id="subStatusText">Загрузка…</span></div>
+      <h1 class="hero-title" id="subTitle">Ваша подписка</h1>
+      <p class="hero-sub" id="subSubtitle">Здесь будет информация о вашей подписке. Откройте бот, чтобы войти в свой профиль.</p>
+    </article>
+
+    <article class="card">
+      <div class="stack">
+        <div class="row"><span class="label">Тариф</span><span class="value" id="planName">—</span></div>
+        <div class="row"><span class="label">Истекает</span><span class="value" id="planExpires">—</span></div>
+        <div class="row"><span class="label">Дней осталось</span><span class="value" id="planDaysLeft">—</span></div>
+        <div class="row"><span class="label">Устройств</span><span class="value" id="planDevices">—</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="row" style="background: transparent; border: none; padding: 0 0 8px; margin-bottom: 6px;">
+        <span class="label">Ссылка-подписка (VLESS)</span>
+      </div>
+      <div class="key-card empty" id="subKey">Ключ ещё не выдан. Активируйте подписку через бот.</div>
+      <button class="copy-btn" id="copyBtn" type="button" hidden>Скопировать</button>
+    </article>
+
+    <div class="actions">
+      <a class="btn btn-primary" id="openBotBtn" href="https://t.me/jutsovpnbot" target="_blank" rel="noopener">Открыть бот</a>
+      <a class="btn btn-secondary" id="supportBtn" href="https://t.me/jutsodev" target="_blank" rel="noopener">Поддержка</a>
+    </div>
+
+    <div class="footer">
+      <span>JUTSOVPN · приватный VPN на основе VLESS · </span>
+      <a href="/legal/privacy" target="_blank" rel="noopener">Политика</a>
+      <span> · </span>
+      <a href="/legal/offer" target="_blank" rel="noopener">Оферта</a>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+
+      function setStatus(active, text) {
+        const el = $("subStatus");
+        const txt = $("subStatusText");
+        if (!el || !txt) return;
+        el.classList.toggle("active", !!active);
+        txt.textContent = text;
+      }
+
+      function fmt(n) { return Number(n).toLocaleString("ru-RU"); }
+
+      function pickTgId() {
+        try {
+          const tg = window.Telegram && window.Telegram.WebApp;
+          const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+          if (u && u.id) return Number(u.id);
+        } catch (e) {}
+        const params = new URLSearchParams(location.search);
+        const id = params.get("uid") || params.get("user_id") || params.get("tg_id");
+        return id ? Number(id) : 0;
+      }
+
+      function applyConfig(cfg) {
+        if (!cfg) return;
+        if (cfg.support_url) {
+          const b = $("supportBtn");
+          if (b) b.href = cfg.support_url;
+        }
+        if (cfg.bot_username) {
+          const b = $("openBotBtn");
+          if (b) b.href = "https://t.me/" + String(cfg.bot_username).replace(/^@/, "");
+        }
+      }
+
+      function applyDashboard(d) {
+        if (!d || !d.subscription) {
+          setStatus(false, "Нет данных");
+          $("subSubtitle").textContent = "Не удалось получить данные о подписке. Откройте бот для авторизации.";
+          return;
+        }
+        const s = d.subscription || {};
+        const active = !!s.has_subscription;
+        setStatus(active, active ? "Подписка активна" : (s.trial_available ? "Доступен пробный период" : "Подписка не активна"));
+        $("subTitle").textContent = active ? "Подписка активна" : "Подписка не активна";
+        $("subSubtitle").textContent = active
+          ? "Скопируйте ссылку ниже и импортируйте её в свой VLESS-клиент (V2Box, Hiddify, NekoBox, Streisand)."
+          : "Активируйте подписку через бот, чтобы получить ссылку для подключения.";
+
+        $("planName").textContent = s.tariff_name || "—";
+        $("planExpires").textContent = s.expires_human || "—";
+        $("planDaysLeft").textContent = (s.days_left == null) ? "—" : fmt(s.days_left);
+        $("planDevices").textContent = (s.devices_active != null && s.devices_max != null)
+          ? `${s.devices_active} / ${s.devices_max}` : "—";
+
+        const key = (s.sub_url || "").trim();
+        const keyEl = $("subKey");
+        const copyBtn = $("copyBtn");
+        if (key) {
+          keyEl.textContent = key;
+          keyEl.classList.remove("empty");
+          if (copyBtn) {
+            copyBtn.hidden = false;
+            copyBtn.onclick = async () => {
+              try {
+                await navigator.clipboard.writeText(key);
+                copyBtn.textContent = "Скопировано ✓";
+                setTimeout(() => { copyBtn.textContent = "Скопировать"; }, 1600);
+              } catch (e) {
+                copyBtn.textContent = "Не удалось скопировать";
+              }
+            };
+          }
+        } else {
+          keyEl.textContent = "Ключ ещё не выдан. Активируйте подписку через бот.";
+          keyEl.classList.add("empty");
+          if (copyBtn) copyBtn.hidden = true;
+        }
+      }
+
+      // Default static state (page works without any auth).
+      setStatus(false, "Войдите через бот");
+      $("subTitle").textContent = "Войдите через JUTSOVPN-бот";
+      $("subSubtitle").textContent = "Откройте JUTSOVPN-бот в Telegram, чтобы увидеть статус своей подписки и получить ссылку для подключения.";
+
+      // Pick up support_url / bot_username from public /api/config so the
+      // CTA buttons match the active settings.
+      fetch("/api/config", { cache: "no-store" })
+        .then((r) => r.ok ? r.json() : null)
+        .then(applyConfig)
+        .catch(() => {});
+    })();
+  </script>
+</body>
+</html>

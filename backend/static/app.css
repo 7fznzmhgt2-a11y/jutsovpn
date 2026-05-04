@@ -1187,6 +1187,20 @@ strong {
   display: none;
 }
 
+.profile-sub-link-pending {
+  color: #6c92ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.profile-sub-link-pending:hover,
+.profile-sub-link-pending:active {
+  color: #88a8ff;
+}
+
 .finance-balance-card {
   padding: 24px 18px;
 }
