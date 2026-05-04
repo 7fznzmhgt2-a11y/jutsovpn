@@ -476,6 +476,7 @@ async function logout() {
     state.session = null;
     state.dashboard = null;
     state.pushSubscribed = false;
+    clearCachedDashboard();
     hidePushPrompt();
     setBrowserAuthGate(true);
     installTelegramLoginWidget();
@@ -1099,6 +1100,12 @@ function applyDashboardUpdate(dashboard, session = state.session, { force = fals
   state.dashboard = dashboard;
   state.pendingDeviceDelete = pendingDeviceDelete;
   state.liveRefreshLastSignature = signature;
+
+  // Persist a copy so that on the very next page load we can immediately
+  // paint the hero/profile with the real subscription data (expiry date,
+  // sub_url, etc.) before /api/session resolves. This prevents the
+  // "до DD месяца YYYY" line from briefly disappearing on revisit.
+  saveCachedDashboard({ dashboard, session: state.session });
 
   renderAll();
 
@@ -1819,18 +1826,18 @@ function renderHero() {
   $("profileName").textContent = dashboard.profile?.name || "Профиль";
   $("roleBadge").textContent = dashboard.profile?.is_admin ? "admin" : "user";
   renderProfileAvatar();
-  // Profile -> "Ссылка подписки": when no key issued yet, render the
-  // placeholder text itself as a clickable link to the /sub subscription
-  // page; otherwise show the raw subscription URL as plain text (so users
-  // can still long-press → copy).
+  // Profile -> "Ссылка подписки": always render the value as a clickable link
+  // pointing at the /sub subscription page. Whether the key has been issued
+  // or not, tapping the text opens the same dynamic page in the in-app
+  // browser.
   const profileKeyEl = $("profileKey");
   if (profileKeyEl) {
+    const subPagePath = state.config?.sub_page_url || "/sub";
+    const subPageUrl = /^https?:\/\//i.test(subPagePath) ? subPagePath : new URL(subPagePath, location.origin).toString();
     if (subscription.sub_url) {
-      profileKeyEl.textContent = subscription.sub_url;
+      profileKeyEl.innerHTML = `<a class="profile-sub-link-active" href="${escapeHtml(subPageUrl)}" target="_blank" rel="noopener" data-sub-page-link="true">${escapeHtml(subscription.sub_url)}</a>`;
       profileKeyEl.dataset.subUrl = "1";
     } else {
-      const subPagePath = state.config?.sub_page_url || "/sub";
-      const subPageUrl = /^https?:\/\//i.test(subPagePath) ? subPagePath : new URL(subPagePath, location.origin).toString();
       const label = t("sub_link_pending") || "Ключ пока не выдан";
       profileKeyEl.innerHTML = `<a class="profile-sub-link-pending" href="${escapeHtml(subPageUrl)}" target="_blank" rel="noopener" data-sub-page-link="true">${escapeHtml(label)}</a>`;
       profileKeyEl.dataset.subUrl = "0";
@@ -2727,6 +2734,35 @@ async function hydrate() {
 // =============================================================
 const PREFS_KEY = "sendvpn:prefs";
 const PREFS_DEFAULT = { lang: "ru", currency: "rub", set: false };
+const DASHBOARD_CACHE_KEY = "sendvpn:dashboard-cache";
+
+function loadCachedDashboard() {
+  try {
+    const raw = window.localStorage?.getItem(DASHBOARD_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedDashboard(payload) {
+  try {
+    if (!payload || typeof payload !== "object") {
+      window.localStorage?.removeItem(DASHBOARD_CACHE_KEY);
+      return;
+    }
+    window.localStorage?.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function clearCachedDashboard() {
+  try {
+    window.localStorage?.removeItem(DASHBOARD_CACHE_KEY);
+  } catch {}
+}
 const I18N = {
   ru: {
     apply: "Применить",
@@ -3282,6 +3318,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   openWebAppFullscreen();
   startLoadingScreen();
+
+  // Pre-paint the dashboard from localStorage cache so the hero ("до DD
+  // месяца YYYY") and profile (sub_url link) are visible immediately on
+  // revisit, before /api/session resolves. The shell stays hidden behind
+  // the loading screen until hydrate() finishes; this just guarantees the
+  // values are correct the moment the screen appears.
+  try {
+    const cached = loadCachedDashboard();
+    if (cached?.dashboard) {
+      applyDashboardUpdate(cached.dashboard, cached.session || state.session, { force: true, highlight: false });
+    }
+  } catch {}
 
   try {
     await hydrate();

@@ -1201,6 +1201,23 @@ strong {
   color: #88a8ff;
 }
 
+.profile-sub-link-active {
+  color: #6c92ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  font-weight: 500;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.profile-sub-link-active:hover,
+.profile-sub-link-active:active {
+  color: #88a8ff;
+}
+
 .finance-balance-card {
   padding: 24px 18px;
 }
