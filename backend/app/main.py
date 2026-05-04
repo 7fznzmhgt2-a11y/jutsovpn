@@ -3753,7 +3753,17 @@ def _serve_static(name: str) -> Response:
         ".html": "text/html",
         ".css": "text/css",
         ".js": "application/javascript",
+        ".mjs": "application/javascript",
+        ".json": "application/json",
         ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".webp": "image/webp",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
         ".webmanifest": "application/manifest+json",
     }
     return Response(safe.read_bytes(), media_type=media_types.get(safe.suffix, "application/octet-stream"))
@@ -3791,6 +3801,14 @@ async def sub_index() -> Response:
 @app.get("/sub/{filename:path}")
 async def sub_file(filename: str) -> Response:
     return _serve_static(f"sub/{filename}")
+
+
+@app.get("/assets/.app-config-v2.json")
+async def sub_app_config() -> Response:
+    """The Remnawave subscription page bundle hard-codes a fetch to
+    `/assets/.app-config-v2.json` (root-absolute, not /sub-relative). Serve a
+    valid config here so the React app can finish booting on /sub."""
+    return _serve_static("sub-app-config-v2.json")
 
 
 @app.get("/legal/offer")
