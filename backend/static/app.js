@@ -1792,10 +1792,22 @@ function renderHero() {
 
   $("daysLeft").textContent = String(daysLeft);
   // Show expiry date whenever the backend says the subscription is still active,
-  // even if days_left rounded down to 0 (e.g. last day of a trial).
-  $("untilDate").textContent = subscription.has_subscription
-    ? `до ${subscription.expires_human || "—"}`
-    : (subscription.expires_human ? `истекла ${subscription.expires_human}` : "нет активной подписки");
+  // even if days_left rounded down to 0 (e.g. last day of a trial). When we
+  // have real data, drop the data-i18n attribute so applyTranslations() won't
+  // overwrite the date with the static "нет активной подписки" placeholder.
+  const untilEl = $("untilDate");
+  if (untilEl) {
+    if (subscription.has_subscription) {
+      untilEl.textContent = `до ${subscription.expires_human || "—"}`;
+      untilEl.removeAttribute("data-i18n");
+    } else if (subscription.expires_human) {
+      untilEl.textContent = `истекла ${subscription.expires_human}`;
+      untilEl.removeAttribute("data-i18n");
+    } else {
+      untilEl.textContent = t("hero_no_sub") || "нет активной подписки";
+      untilEl.setAttribute("data-i18n", "hero_no_sub");
+    }
+  }
   $("trafficUsed").textContent = trafficUsed;
   $("trafficLimit").textContent = `/ ${trafficLimit}`;
   if ($("trafficHint")) $("trafficHint").textContent = `${trafficUsed} использовано`;
