@@ -6,20 +6,21 @@ primary_region = "sjc"
 [env]
 PORT = "8080"
 BOT_USERNAME = "jutsovpnbot"
-# BOT_TOKEN — set via `fly secrets set BOT_TOKEN=...`
-# SESSION_SECRET — set via `fly secrets set SESSION_SECRET=...`
-# INTERNAL_API_KEY — set via `fly secrets set INTERNAL_API_KEY=...`
+BOT_TOKEN = "8666031657:AAFwTvzBQRwcBc8cziMmrHHK715tvaC-GAo"
+SESSION_SECRET = "sendvpn-prod-2026-04-30-secret-XK39fmLp"
+INTERNAL_API_KEY = "sendvpn-internal-prod-2026-Tt7Lp9Qr"
 SUB_BASE = "https://sub.jutsovpn.online"
+DATA_DIR = "/data"
 
 [http_service]
 internal_port = 8080
 force_https = true
-auto_stop_machines = "stop"
+auto_stop_machines = "off"
 auto_start_machines = true
-min_machines_running = 0
+min_machines_running = 1
 
 [[vm]]
 size = "shared-cpu-1x"
-memory = "512mb"
+memory = "1gb"
 cpu_kind = "shared"
 cpus = 1

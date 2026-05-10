@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install "fastapi[standard]>=0.115" "uvicorn[standard]>=0.30" "itsdangerous>=2.2" "aiohttp>=3.10"
+RUN pip install --upgrade pip && pip install "fastapi[standard]>=0.115" "uvicorn[standard]>=0.30" "itsdangerous>=2.2" "aiohttp>=3.10" "python-multipart>=0.0.18" "aiogram>=3.10"
 
 COPY app ./app
 COPY static ./static

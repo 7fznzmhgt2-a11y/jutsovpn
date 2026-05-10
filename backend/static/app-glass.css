@@ -1,0 +1,1126 @@
+/* ============================================================
+ * JUTSOVPN — Liquid Glass Redesign (override layer).
+ *
+ * Loaded AFTER app.css so every rule below wins the cascade and
+ * reshapes the original layout without touching markup or JS.
+ *
+ * Visual direction:
+ *   - same Montserrat typography, brand name and black palette
+ *   - rearranged composition: floating header pill, ring-based hero,
+ *     stat tiles in a 2-column grid, floating glass tabbar
+ *   - frosted "Liquid Glass" surfaces with backdrop-filter, gradient
+ *     edges and inner light highlights
+ *   - cool aurora behind the glass to give the blur something to
+ *     refract while staying within the b/w palette
+ *
+ * To revert: delete this file or remove its <link> in index.html.
+ * ============================================================ */
+
+/* ---------- 1. Tokens ---------- */
+:root {
+  --jg-bg: #000000;
+  --jg-aurora-1: rgba(120, 138, 255, 0.18);
+  --jg-aurora-2: rgba(255, 255, 255, 0.10);
+  --jg-aurora-3: rgba(80, 80, 160, 0.16);
+
+  --jg-glass-bg:        rgba(255, 255, 255, 0.055);
+  --jg-glass-bg-strong: rgba(255, 255, 255, 0.085);
+  --jg-glass-bg-soft:   rgba(255, 255, 255, 0.030);
+  --jg-glass-border:    rgba(255, 255, 255, 0.14);
+  --jg-glass-border-strong: rgba(255, 255, 255, 0.24);
+  --jg-glass-highlight: rgba(255, 255, 255, 0.40);
+  --jg-glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+
+  --jg-text:        #ffffff;
+  --jg-text-soft:   rgba(255, 255, 255, 0.72);
+  --jg-text-muted:  rgba(255, 255, 255, 0.46);
+  --jg-text-faint:  rgba(255, 255, 255, 0.30);
+
+  --jg-radius-xl: 28px;
+  --jg-radius-lg: 22px;
+  --jg-radius-md: 18px;
+  --jg-radius-sm: 14px;
+
+  /* re-map the original variables so leftover styles align with the new
+   * surface palette automatically. */
+  --bg: var(--jg-bg);
+  --bg-soft: rgba(255, 255, 255, 0.02);
+  --bg-soft-2: rgba(255, 255, 255, 0.05);
+  --panel: var(--jg-glass-bg);
+  --line: var(--jg-glass-border);
+  --line-strong: var(--jg-glass-border-strong);
+  --text: var(--jg-text);
+  --muted: var(--jg-text-muted);
+  --muted-2: var(--jg-text-soft);
+  --accent: #ffffff;
+  --accent-text: #050505;
+}
+
+/* ---------- 2. Page background ---------- */
+html, body {
+  background: var(--jg-bg);
+}
+body {
+  background-image: none;
+}
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(80px);
+  opacity: 0.85;
+  will-change: transform;
+}
+body::before {
+  top: -22vh;
+  left: -18vw;
+  width: 80vw;
+  height: 80vw;
+  background:
+    radial-gradient(closest-side, var(--jg-aurora-1), transparent 70%),
+    radial-gradient(closest-side, var(--jg-aurora-3) 30%, transparent 70%) 30% 60%/60% 60% no-repeat;
+  animation: jgAurora1 22s ease-in-out infinite alternate;
+}
+body::after {
+  bottom: -28vh;
+  right: -22vw;
+  width: 90vw;
+  height: 90vw;
+  background:
+    radial-gradient(closest-side, var(--jg-aurora-2), transparent 70%),
+    radial-gradient(closest-side, var(--jg-aurora-3), transparent 70%) 70% 30%/70% 70% no-repeat;
+  animation: jgAurora2 28s ease-in-out infinite alternate;
+}
+@keyframes jgAurora1 {
+  0%   { transform: translate3d(0,   0, 0) scale(1); }
+  100% { transform: translate3d(8vw, 6vh, 0) scale(1.08); }
+}
+@keyframes jgAurora2 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(-6vw, -8vh, 0) scale(1.06); }
+}
+
+/* ensure shell sits above the aurora */
+.app-shell, .header-bar, .tabbar, .browser-auth-gate, .loading-screen {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 3. Glass primitive ---------- */
+/* Reusable: every glass surface gets the same crisp blur + edge light. */
+.jg-surface,
+.stat-card,
+.buy-card,
+.finance-card,
+.profile-card,
+.plan-card,
+.copy-card,
+.device-item,
+.referral-link-card,
+.balance-topup-card,
+.stars-card,
+.promo-card {
+  position: relative;
+  background: var(--jg-glass-bg);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  border-radius: var(--jg-radius-lg);
+  box-shadow: var(--jg-glass-shadow);
+  isolation: isolate;
+  overflow: hidden;
+}
+.jg-surface::before,
+.stat-card::before,
+.buy-card::before,
+.finance-card::before,
+.profile-card::before,
+.plan-card::before,
+.copy-card::before,
+.device-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 22%, rgba(255,255,255,0) 78%, rgba(255,255,255,0.05) 100%);
+  mix-blend-mode: screen;
+  z-index: 1;
+}
+.jg-surface::after,
+.stat-card::after,
+.buy-card::after,
+.finance-card::after,
+.profile-card::after,
+.plan-card::after,
+.copy-card::after,
+.device-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 var(--jg-glass-highlight),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+  z-index: 1;
+}
+.stat-card > *,
+.buy-card > *,
+.finance-card > *,
+.profile-card > *,
+.plan-card > *,
+.copy-card > *,
+.device-item > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------- 4. App shell + screen padding ---------- */
+.app-shell {
+  width: min(100%, 540px);
+  padding:
+    max(110px, env(safe-area-inset-top) + 92px)
+    16px
+    calc(120px + env(safe-area-inset-bottom))
+    16px;
+}
+.screen {
+  gap: 18px;
+}
+
+/* ---------- 5. Floating header pill ---------- */
+.header-bar {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100% - 24px, 520px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 10px 18px;
+  border-radius: 999px;
+  background: rgba(20, 20, 24, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow:
+    var(--jg-glass-shadow),
+    inset 0 1px 0 var(--jg-glass-highlight);
+  z-index: 30;
+}
+.header-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 28%, rgba(255,255,255,0) 78%, rgba(255,255,255,0.06) 100%);
+  mix-blend-mode: screen;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.brand {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: 0.16em;
+  color: var(--jg-text);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.lang-toggle {
+  flex: 0 0 auto;
+  height: 32px;
+  min-width: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--jg-glass-border);
+  background: rgba(255,255,255,0.05);
+  color: var(--jg-text);
+  font-weight: 800;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 160ms ease, transform 120ms ease;
+}
+.lang-toggle:active { transform: scale(0.96); }
+.lang-toggle:hover { background: rgba(255,255,255,0.10); }
+
+.live-badge {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--jg-glass-border);
+  background: rgba(255,255,255,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.live-badge::before { display: none; }
+.live-badge::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side, rgba(255,255,255,0.55), rgba(255,255,255,0) 70%);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+/* ---------- 6. HERO — circular days ring ---------- */
+.hero-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px 18px 22px;
+  border-radius: var(--jg-radius-xl);
+  background: var(--jg-glass-bg-strong);
+  -webkit-backdrop-filter: blur(34px) saturate(180%);
+          backdrop-filter: blur(34px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow: var(--jg-glass-shadow);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.hero-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(140deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 28%, rgba(255,255,255,0) 76%, rgba(255,255,255,0.08) 100%);
+  mix-blend-mode: screen;
+  z-index: 1;
+}
+.hero-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 var(--jg-glass-highlight),
+    inset 0 -1px 0 rgba(0,0,0,0.5);
+  z-index: 1;
+}
+.hero-panel > * { position: relative; z-index: 2; }
+
+/* New ring composition for the days counter. */
+.hero-center {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 4px 4px;
+}
+.hero-days {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 3rem;
+  letter-spacing: -0.04em;
+  color: var(--jg-text);
+  background: radial-gradient(closest-side, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.02) 70%, transparent 100%);
+  isolation: isolate;
+}
+.hero-days::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background:
+    conic-gradient(from 220deg,
+      rgba(255,255,255,0.95) 0deg,
+      rgba(255,255,255,0.20) 180deg,
+      rgba(255,255,255,0.05) 270deg,
+      rgba(255,255,255,0.95) 360deg);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  animation: jgRingSpin 12s linear infinite;
+}
+.hero-days::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.10), rgba(255,255,255,0) 50%);
+  pointer-events: none;
+}
+@keyframes jgRingSpin {
+  to { transform: rotate(360deg); }
+}
+
+.hero-caption {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--jg-text-muted);
+  text-align: left;
+  margin: 0 0 6px;
+}
+.hero-subcaption {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--jg-text);
+  text-align: left;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+/* Hero action row — restyled glass buttons */
+.hero-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ---------- 7. Universal CTAs (glass buttons) ---------- */
+.cta {
+  position: relative;
+  border-radius: 999px;
+  padding: 13px 18px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--jg-glass-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease, box-shadow 220ms ease;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 var(--jg-glass-highlight);
+}
+.cta:active { transform: scale(0.98); }
+
+.cta-primary {
+  background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
+  color: #0a0a0a;
+  border-color: rgba(255,255,255,0.72);
+  box-shadow:
+    0 14px 32px rgba(255,255,255,0.18),
+    0 2px 6px rgba(0,0,0,0.35);
+}
+.cta-primary:hover { filter: brightness(1.05); }
+
+.cta-secondary,
+.cta-outline {
+  background: var(--jg-glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+          backdrop-filter: blur(20px) saturate(180%);
+  color: var(--jg-text);
+  border-color: var(--jg-glass-border);
+}
+.cta-secondary:hover,
+.cta-outline:hover {
+  background: var(--jg-glass-bg-strong);
+  border-color: var(--jg-glass-border-strong);
+}
+
+.cta-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 8. Hero stat tiles (Traffic) ---------- */
+.cards-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.stat-card,
+.traffic-card {
+  padding: 14px 16px 16px;
+  border-radius: var(--jg-radius-md);
+  display: grid;
+  gap: 4px;
+}
+.stat-card .label,
+.traffic-card .label,
+.copy-card .label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  color: var(--jg-text-muted);
+}
+.traffic-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.traffic-row strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.45rem;
+  letter-spacing: -0.02em;
+  color: var(--jg-text);
+}
+.traffic-row span {
+  color: var(--jg-text-muted);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* Inject a synthetic "Devices" tile next to traffic by reusing the
+ * existing #deviceCounter + counter-pill that was inside the section
+ * head. We move the head out of view and pull the counter into the
+ * grid via :has() — no markup change. */
+.devices-section {
+  display: contents; /* let children flow into hero panel grid */
+}
+.devices-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+.devices-head h2 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  color: var(--jg-text);
+  margin: 0;
+}
+.counter-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--jg-text);
+  border-radius: 999px;
+  background: var(--jg-glass-bg-strong);
+  border: 1px solid var(--jg-glass-border);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+          backdrop-filter: blur(20px) saturate(180%);
+}
+
+.device-list {
+  display: grid;
+  gap: 10px;
+}
+.device-item {
+  padding: 14px 16px;
+  border-radius: var(--jg-radius-md);
+  display: grid;
+  gap: 4px;
+  background: var(--jg-glass-bg);
+}
+.device-item .device-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  color: var(--jg-text);
+}
+.device-item .device-subtitle {
+  color: var(--jg-text-muted);
+  font-size: 0.85rem;
+}
+.device-item-empty {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.device-empty-girl {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+/* ---------- 9. Section heads (Buy / Finance / Profile) ---------- */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 4px;
+}
+.section-head h2 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.4rem;
+  letter-spacing: -0.02em;
+  color: var(--jg-text);
+  margin: 0;
+}
+
+/* ---------- 10. Plan cards (Buy tab) ---------- */
+.plan-list {
+  display: grid;
+  gap: 12px;
+}
+.plan-card {
+  padding: 16px 18px 18px;
+  border-radius: var(--jg-radius-lg);
+  display: grid;
+  gap: 10px;
+}
+.plan-card.is-featured {
+  background: var(--jg-glass-bg-strong);
+  border-color: var(--jg-glass-border-strong);
+}
+.plan-card.is-featured::before {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0) 26%, rgba(255,255,255,0) 70%, rgba(255,255,255,0.14) 100%);
+  animation: jgShimmer 5.6s ease-in-out infinite;
+}
+@keyframes jgShimmer {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+.plan-card-featured-badge {
+  position: absolute;
+  top: -8px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0a0a0a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  z-index: 3;
+  box-shadow: 0 6px 18px rgba(255,255,255,0.20);
+}
+
+.plan-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.plan-top .label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  color: var(--jg-text-muted);
+}
+.plan-name {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  color: var(--jg-text);
+}
+.plan-price {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  color: var(--jg-text);
+  white-space: nowrap;
+}
+.plan-meta {
+  font-size: 0.85rem;
+  color: var(--jg-text-muted);
+  font-weight: 600;
+}
+.plan-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.plan-actions .cta {
+  padding: 11px 14px;
+  font-size: 0.86rem;
+}
+
+.buy-block + .buy-block { margin-top: 18px; }
+.buy-block h3 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  color: var(--jg-text);
+  padding: 0 4px 8px;
+  margin: 0;
+}
+
+/* ---------- 11. Finance cards ---------- */
+.finance-section {
+  display: grid;
+  gap: 14px;
+}
+.finance-card {
+  padding: 18px 18px 20px;
+  border-radius: var(--jg-radius-lg);
+  display: grid;
+  gap: 12px;
+}
+.finance-card-head h3 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+  color: var(--jg-text);
+  margin: 0;
+}
+.finance-card-head p {
+  margin: 4px 0 0;
+  color: var(--jg-text-muted);
+  font-size: 0.85rem;
+}
+.finance-balance-card {
+  padding: 22px 22px 24px;
+}
+.finance-balance-block .label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--jg-text-muted);
+}
+.finance-balance-block h3 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+  color: var(--jg-text);
+  margin: 6px 0 0;
+}
+
+.stack-form {
+  display: grid;
+  gap: 10px;
+}
+.stack-form input {
+  border-radius: 14px;
+  border: 1px solid var(--jg-glass-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--jg-text);
+  padding: 12px 14px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.stack-form input::placeholder { color: var(--jg-text-faint); }
+.stack-form input:focus {
+  outline: none;
+  border-color: var(--jg-glass-border-strong);
+  background: rgba(255,255,255,0.07);
+}
+.field-hint {
+  color: var(--jg-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.payment-collapse {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--jg-glass-bg);
+  border: 1px solid var(--jg-glass-border);
+  color: var(--jg-text);
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.payment-methods.compact-methods {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.payment-method {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--jg-glass-border);
+  color: var(--jg-text);
+  cursor: pointer;
+}
+.payment-method-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+.payment-method-meta {
+  color: var(--jg-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stars-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.star-pack {
+  display: grid;
+  gap: 4px;
+  padding: 12px 10px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--jg-glass-border);
+  color: var(--jg-text);
+  font-family: var(--font-display);
+  cursor: pointer;
+  text-align: center;
+}
+.star-pack:hover {
+  background: rgba(255,255,255,0.08);
+}
+.star-pack-amount {
+  font-weight: 900;
+  font-size: 1.05rem;
+}
+.star-pack-price {
+  color: var(--jg-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* ---------- 12. Profile ---------- */
+.profile-stack {
+  display: grid;
+  gap: 14px;
+}
+.profile-header {
+  position: relative;
+  padding: 22px 22px 22px 96px;
+  border-radius: var(--jg-radius-lg);
+  background: var(--jg-glass-bg);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow: var(--jg-glass-shadow);
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+.profile-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 28%, rgba(255,255,255,0) 78%, rgba(255,255,255,0.06) 100%);
+  mix-blend-mode: screen;
+  z-index: 1;
+}
+.profile-header > * { position: relative; z-index: 2; }
+
+.profile-avatar {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.4rem;
+  color: var(--jg-text);
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,0.30), rgba(255,255,255,0.06) 60%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid var(--jg-glass-border-strong);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 var(--jg-glass-highlight);
+  z-index: 3;
+  overflow: hidden;
+}
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.profile-info h3 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+  color: var(--jg-text);
+  margin: 0;
+}
+.role-id {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--jg-text-muted);
+}
+
+.copy-card {
+  padding: 16px 18px 18px;
+}
+.copy-card .copy-header {
+  margin-bottom: 8px;
+}
+.copy-card pre {
+  margin: 0;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 0.86rem;
+  color: var(--jg-text);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--jg-glass-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.profile-card.stats-list {
+  padding: 6px 18px;
+}
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--jg-glass-border);
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-row .label-plain {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.86rem;
+  color: var(--jg-text-muted);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.stat-row strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+  color: var(--jg-text);
+  font-size: 0.92rem;
+}
+.stat-value-gray {
+  color: var(--jg-text-soft) !important;
+}
+
+.profile-actions {
+  display: grid;
+  gap: 10px;
+}
+.profile-actions .cta { width: 100%; }
+
+.logout-button {
+  color: rgba(255, 110, 110, 0.92) !important;
+  border-color: rgba(255, 110, 110, 0.30) !important;
+}
+
+/* ---------- 13. Floating glass tabbar ---------- */
+.tabbar {
+  position: fixed;
+  left: 50%;
+  bottom: max(14px, env(safe-area-inset-bottom) + 12px);
+  transform: translateX(-50%);
+  width: min(100% - 24px, 460px);
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 999px;
+  background: rgba(15, 15, 18, 0.62);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+          backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow:
+    var(--jg-glass-shadow),
+    inset 0 1px 0 var(--jg-glass-highlight);
+  z-index: 30;
+}
+.tabbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 28%, rgba(255,255,255,0) 78%, rgba(255,255,255,0.06) 100%);
+  mix-blend-mode: screen;
+}
+.tabbar-item {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 4px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--jg-text-muted);
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: color 200ms ease, background 220ms ease, border-color 220ms ease, transform 200ms ease;
+  position: relative;
+  z-index: 2;
+}
+.tabbar-item:active { transform: scale(0.96); }
+.tabbar-item.is-active {
+  color: var(--jg-text);
+  background: var(--jg-glass-bg-strong);
+  border-color: var(--jg-glass-border);
+  box-shadow: inset 0 1px 0 var(--jg-glass-highlight);
+}
+.tabbar-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tabbar-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- 14. Auth gate / overlays ---------- */
+.browser-auth-gate {
+  background: rgba(0,0,0,0.55);
+  -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+}
+.browser-auth-panel {
+  background: rgba(20,20,24,0.6);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow: var(--jg-glass-shadow);
+  border-radius: var(--jg-radius-xl);
+}
+.auth-brand {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: 0.18em;
+}
+
+/* ---------- 15. Sheets / modals ---------- */
+.referral-sheet,
+.notification-sheet,
+.push-sheet {
+  background: rgba(0,0,0,0.55);
+  -webkit-backdrop-filter: blur(14px);
+          backdrop-filter: blur(14px);
+}
+.referral-panel,
+.notification-panel,
+.push-panel,
+.success-card {
+  background: rgba(18,18,22,0.78);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow: var(--jg-glass-shadow);
+}
+
+/* ---------- 16. Trial gate ---------- */
+.trial-card {
+  background: rgba(20,20,24,0.7);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+          backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--jg-glass-border);
+  box-shadow: var(--jg-glass-shadow);
+  border-radius: var(--jg-radius-xl);
+}
+
+/* ---------- 17. Live update glow tweak ---------- */
+@keyframes liveUpdateGlow {
+  0%   { box-shadow: 0 0 0 rgba(255,255,255,0); }
+  35%  { box-shadow: 0 0 0 1px rgba(255,255,255,0.32), 0 16px 40px rgba(255,255,255,0.10); }
+  100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+}
+
+/* ---------- 18. Misc compatibility ---------- */
+.app-shell.trial-mode .header-bar { display: none; }
+
+/* Reduce motion respect */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after,
+  .hero-days::before,
+  .plan-card.is-featured::before {
+    animation: none !important;
+  }
+}
+
+/* Narrow phones — keep ring visible but tighten paddings */
+@media (max-width: 360px) {
+  .hero-center { grid-template-columns: 108px 1fr; gap: 12px; }
+  .hero-days { width: 108px; height: 108px; font-size: 2.4rem; }
+  .stars-grid { grid-template-columns: repeat(2, 1fr); }
+}

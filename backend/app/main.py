@@ -3860,6 +3860,25 @@ async def _on_startup() -> None:
     asyncio.create_task(_flusher())
     asyncio.create_task(_periodic_safety())
 
+    # Run the Telegram bot polling loop in-process so /start, /admin etc.
+    # work without a separate worker.
+    if os.environ.get("RUN_BOT", "1") not in {"0", "false", "False", ""}:
+        try:
+            from app.bot import run_bot  # noqa: WPS433
+
+            async def _bot_supervisor() -> None:
+                while True:
+                    try:
+                        await run_bot()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Bot polling crashed; restarting in 5s")
+                        await asyncio.sleep(5.0)
+
+            asyncio.create_task(_bot_supervisor())
+            logger.info("Telegram bot polling task scheduled")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to schedule bot polling task")
+
 
 @app.on_event("shutdown")
 async def _on_shutdown() -> None:

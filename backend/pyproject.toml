@@ -9,4 +9,5 @@ dependencies = [
     "itsdangerous>=2.2",
     "aiohttp>=3.10",
     "python-multipart>=0.0.18",
+    "aiogram>=3.10",
 ]
