@@ -25,8 +25,8 @@ from itsdangerous import BadSignature, URLSafeSerializer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sendvpn")
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8277937596:AAGalxgUyYDUw5_wQuL7yB1_oDaW7brGOfU")
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "jutsovpnbot")
+BOT_TOKEN = (os.environ.get("BOT_TOKEN") or "8617108727:AAFA9A3QaR9hmAzLsrtqW6A74A6VhpCEubQ").strip()
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "jutsiaibot")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "sendvpn-dev-secret-change-me")
 ADMIN_IDS = {
     int(value)

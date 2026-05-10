@@ -5,8 +5,8 @@ primary_region = "sjc"
 
 [env]
 PORT = "8080"
-BOT_USERNAME = "jutsovpnbot"
-BOT_TOKEN = "8666031657:AAFwTvzBQRwcBc8cziMmrHHK715tvaC-GAo"
+BOT_USERNAME = "jutsiaibot"
+BOT_TOKEN = "8617108727:AAFA9A3QaR9hmAzLsrtqW6A74A6VhpCEubQ"
 SESSION_SECRET = "sendvpn-prod-2026-04-30-secret-XK39fmLp"
 INTERNAL_API_KEY = "sendvpn-internal-prod-2026-Tt7Lp9Qr"
 SUB_BASE = "https://sub.jutsovpn.online"

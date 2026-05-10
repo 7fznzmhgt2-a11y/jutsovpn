@@ -21,7 +21,7 @@ from aiogram.types import (
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = os.environ.get("BOT_TOKEN") or "8666031657:AAFwTvzBQRwcBc8cziMmrHHK715tvaC-GAo"
+TOKEN = (os.environ.get("BOT_TOKEN") or "8617108727:AAFA9A3QaR9hmAzLsrtqW6A74A6VhpCEubQ").strip()
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://jutsovpn-backend-gfyfeciw.fly.dev/")
 ADMIN_URL = os.environ.get("ADMIN_URL", "https://jutsovpn-backend-gfyfeciw.fly.dev/jutso")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://jutsovpn-backend-gfyfeciw.fly.dev").rstrip("/")
