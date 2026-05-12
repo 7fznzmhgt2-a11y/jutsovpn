@@ -26,6 +26,11 @@ def main_menu_kb() -> InlineKeyboardMarkup:
             icon_custom_emoji_id=Emoji.EYE,
         )],
         [InlineKeyboardButton(
+            text="Что узнал",
+            callback_data="menu:knowledge",
+            icon_custom_emoji_id=Emoji.GROWTH,
+        )],
+        [InlineKeyboardButton(
             text="Настройки",
             callback_data="menu:settings",
             icon_custom_emoji_id=Emoji.SETTINGS,
@@ -191,6 +196,16 @@ def chats_add_cancel_kb() -> InlineKeyboardMarkup:
 def chat_info_kb(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
+            text="Что узнал из чата",
+            callback_data=f"chats:learned:{chat_id}",
+            icon_custom_emoji_id=Emoji.GROWTH,
+        )],
+        [InlineKeyboardButton(
+            text="Статистика",
+            callback_data=f"chats:stats:{chat_id}",
+            icon_custom_emoji_id=Emoji.STATS_CHART,
+        )],
+        [InlineKeyboardButton(
             text="Удалить",
             callback_data=f"chats:remove:{chat_id}",
             icon_custom_emoji_id=Emoji.TRASH,
@@ -198,6 +213,32 @@ def chat_info_kb(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="◁ Назад",
             callback_data="menu:chats",
+        )],
+    ])
+
+
+# ── Knowledge (Что узнал) ─────────────────────────────────────────
+
+def knowledge_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Анализ всех чатов",
+            callback_data="knowledge:analyze_all",
+            icon_custom_emoji_id=Emoji.BOT,
+        )],
+        [InlineKeyboardButton(
+            text="Статистика",
+            callback_data="knowledge:stats",
+            icon_custom_emoji_id=Emoji.STATS_CHART,
+        )],
+        [InlineKeyboardButton(
+            text="Стиль общения",
+            callback_data="knowledge:style",
+            icon_custom_emoji_id=Emoji.WRITE,
+        )],
+        [InlineKeyboardButton(
+            text="◁ Назад",
+            callback_data="menu:main",
         )],
     ])
 
@@ -240,6 +281,62 @@ def settings_cancel_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="Отмена",
             callback_data="settings:cancel",
+            icon_custom_emoji_id=Emoji.CROSS,
+        )],
+    ])
+
+
+# ── Model picker ───────────────────────────────────────────────────
+
+def model_picker_kb(
+    models: list[dict], page: int = 0, per_page: int = 8
+) -> InlineKeyboardMarkup:
+    start = page * per_page
+    end = start + per_page
+    page_models = models[start:end]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for m in page_models:
+        model_id = m["id"]
+        name = m.get("name", model_id)
+        short = name[:35] + "…" if len(name) > 35 else name
+        rows.append([InlineKeyboardButton(
+            text=short,
+            callback_data=f"model:pick:{model_id[:50]}",
+            icon_custom_emoji_id=Emoji.BOT,
+        )])
+
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="◁ Назад",
+            callback_data=f"model:page:{page - 1}",
+        ))
+    if end < len(models):
+        nav.append(InlineKeyboardButton(
+            text="Далее ▷",
+            callback_data=f"model:page:{page + 1}",
+        ))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(
+        text="Поиск модели",
+        callback_data="model:search",
+        icon_custom_emoji_id=Emoji.SEARCH if hasattr(Emoji, "SEARCH") else Emoji.EYE,
+    )])
+    rows.append([InlineKeyboardButton(
+        text="◁ Настройки",
+        callback_data="menu:settings",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def model_search_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Отмена",
+            callback_data="settings:model",
             icon_custom_emoji_id=Emoji.CROSS,
         )],
     ])
