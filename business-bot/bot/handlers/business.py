@@ -326,7 +326,7 @@ async def _handle_owner_commands(
     if lower == ".sc" or lower == ". sc":
         await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
         try:
-            await bot.send_message(
+            prompt_msg = await bot.send_message(
                 chat_id=chat_id,
                 text=(
                     f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} SoundCloud</b>\n\n'
@@ -335,9 +335,10 @@ async def _handle_owner_commands(
                 parse_mode="HTML",
                 business_connection_id=biz_id,
             )
+            prompt_msg_id = prompt_msg.message_id
         except Exception:
-            pass
-        _cmd_state[key] = {"step": "sc_waiting_query", "data": {"biz_id": biz_id}}
+            prompt_msg_id = None
+        _cmd_state[key] = {"step": "sc_waiting_query", "data": {"biz_id": biz_id, "prompt_msg_id": prompt_msg_id}}
         return True
 
     # Waiting for song name
@@ -345,6 +346,11 @@ async def _handle_owner_commands(
         query = text.strip()
         biz = state["data"].get("biz_id", biz_id)
         await _delete_business_msg(bot, biz, chat_id, message.message_id)
+
+        # Delete the "какую песню ищем" prompt
+        prompt_msg_id = state["data"].get("prompt_msg_id")
+        if prompt_msg_id:
+            await _delete_business_msg(bot, biz, chat_id, prompt_msg_id)
 
         # Send searching status
         try:
