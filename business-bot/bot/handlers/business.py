@@ -302,8 +302,41 @@ async def _handle_owner_commands(
             _cmd_state.pop(key, None)
             return
 
-        if step == "calc_currency_waiting":
-            await _cmd_calc_currency_parse(bot, biz, chat_id, key, text.strip())
+        if step == "calc_currency_amount":
+            # User typed the amount; now show "TO" currency categories
+            try:
+                amount = float(text.strip().replace(",", "."))
+            except ValueError:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f'{tg_emoji(Emoji.CROSS, "❌")} напиши число',
+                        parse_mode="HTML",
+                        business_connection_id=biz,
+                    )
+                except Exception:
+                    pass
+                return
+            from_cur = state["data"].get("from_cur", "USD")
+            amount_str = f"{amount:g}"
+            buttons = _currency_category_buttons(key[0], key[1], "to")
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f'{tg_emoji(Emoji.MONEY, "💱")} <b>{amount_str} {from_cur}</b>\n\n'
+                        f'в какую валюту конвертируем'
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                    business_connection_id=biz,
+                )
+                _cmd_state[key] = {
+                    "step": "calc_currency_to",
+                    "data": {"biz_id": biz, "from_cur": from_cur, "amount": amount, "menu_msg_id": msg.message_id},
+                }
+            except Exception:
+                _cmd_state.pop(key, None)
             return
 
         if step == "qr_waiting":
@@ -574,6 +607,8 @@ async def _cmd_sv_download(bot: Bot, biz_id: str, chat_id: int, key: tuple, url:
             "--no-playlist",
             "-f", "best[filesize<50M]/best",
             "--merge-output-format", "mp4",
+            "--impersonate", "chrome",
+            "--no-check-certificates",
             "-o", output_path,
             url,
             stdout=asyncio.subprocess.PIPE,
@@ -581,11 +616,33 @@ async def _cmd_sv_download(bot: Bot, biz_id: str, chat_id: int, key: tuple, url:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
 
+        # If impersonation failed, retry without it
+        if proc.returncode != 0 and b"impersonat" in stderr.lower():
+            proc = await asyncio.create_subprocess_exec(
+                "yt-dlp",
+                "--no-playlist",
+                "-f", "best[filesize<50M]/best",
+                "--merge-output-format", "mp4",
+                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "--no-check-certificates",
+                "-o", output_path,
+                url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+
         if proc.returncode != 0:
-            logger.error("yt-dlp video failed: %s", stderr.decode()[:500])
+            err_text = stderr.decode(errors="ignore")[:500]
+            logger.error("yt-dlp video failed: %s", err_text)
+            error_detail = ""
+            if "blocked" in err_text.lower() or "ip" in err_text.lower():
+                error_detail = "\n<i>IP сервера заблокирован этим сайтом</i>"
+            elif "not found" in err_text.lower() or "404" in err_text:
+                error_detail = "\n<i>видео не найдено</i>"
             try:
                 await bot.edit_message_text(
-                    text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось скачать видео',
+                    text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось скачать видео{error_detail}',
                     parse_mode="HTML",
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
@@ -1087,87 +1144,63 @@ async def _fetch_rates() -> dict:
     return rates
 
 
-async def _cmd_calc_currency_parse(bot: Bot, biz_id: str, chat_id: int, key: tuple, text: str) -> None:
-    """Parse currency conversion input like '100 USD RUB' or '100 usd to rub'."""
-    _cmd_state.pop(key, None)
+def _currency_category_buttons(owner_id: int, chat_id: int, prefix: str) -> list:
+    """Build inline buttons for currency category selection."""
+    return [
+        [
+            InlineKeyboardButton(text="💵 Основные", callback_data=f"cur:{prefix}:main:{owner_id}:{chat_id}"),
+            InlineKeyboardButton(text="🪙 Крипта", callback_data=f"cur:{prefix}:crypto:{owner_id}:{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🌍 Другие", callback_data=f"cur:{prefix}:other:{owner_id}:{chat_id}"),
+        ],
+        [InlineKeyboardButton(text="отмена", callback_data=f"cur:cancel:x:{owner_id}:{chat_id}")],
+    ]
 
-    text = text.upper().replace(" TO ", " ").replace(" В ", " ").replace(" -> ", " ").replace("→", " ")
-    parts = text.split()
 
-    amount = None
-    from_cur = None
-    to_cur = None
+def _currency_buttons(currencies: list, owner_id: int, chat_id: int, prefix: str) -> list:
+    """Build inline buttons for individual currencies (3 per row)."""
+    buttons = []
+    row = []
+    for cur in currencies:
+        row.append(InlineKeyboardButton(text=cur, callback_data=f"cur:{prefix}:{cur}:{owner_id}:{chat_id}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅ назад", callback_data=f"cur:{prefix}:back:{owner_id}:{chat_id}")])
+    return buttons
 
-    for p in parts:
-        if amount is None:
-            try:
-                amount = float(p.replace(",", "."))
-                continue
-            except ValueError:
-                pass
-        if from_cur is None:
-            from_cur = p
-        elif to_cur is None:
-            to_cur = p
 
-    if amount is None or from_cur is None or to_cur is None:
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f'{tg_emoji(Emoji.CROSS, "❌")} формат: <code>100 USD RUB</code>\n'
-                    f'или <code>0.5 BTC USD</code>'
-                ),
-                parse_mode="HTML",
-                business_connection_id=biz_id,
-            )
-        except Exception:
-            pass
-        return
+CATEGORY_MAP = {
+    "main": CURRENCY_CATEGORIES["Основные"],
+    "crypto": CURRENCY_CATEGORIES["Крипта"],
+    "other": CURRENCY_CATEGORIES["Другие"],
+}
 
-    try:
-        status_msg = await bot.send_message(
-            chat_id=chat_id,
-            text=f'{tg_emoji(Emoji.LOADING, "🔄")} считаю курс...',
-            parse_mode="HTML",
-            business_connection_id=biz_id,
-        )
-    except Exception:
-        return
 
+async def _do_currency_convert(bot: Bot, biz_id: str, chat_id: int, from_cur: str, to_cur: str, amount: float, msg_id: int) -> None:
+    """Perform the actual conversion and edit the message with the result."""
     rates = await _fetch_rates()
 
-    if from_cur not in rates:
+    if from_cur not in rates or to_cur not in rates:
+        missing = from_cur if from_cur not in rates else to_cur
         try:
             await bot.edit_message_text(
-                text=f'{tg_emoji(Emoji.CROSS, "❌")} валюта <b>{from_cur}</b> не найдена',
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} валюта <b>{missing}</b> не найдена',
                 parse_mode="HTML",
                 chat_id=chat_id,
-                message_id=status_msg.message_id,
+                message_id=msg_id,
                 business_connection_id=biz_id,
             )
         except Exception:
             pass
         return
 
-    if to_cur not in rates:
-        try:
-            await bot.edit_message_text(
-                text=f'{tg_emoji(Emoji.CROSS, "❌")} валюта <b>{to_cur}</b> не найдена',
-                parse_mode="HTML",
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-                business_connection_id=biz_id,
-            )
-        except Exception:
-            pass
-        return
-
-    # Convert: amount in from_cur -> USD -> to_cur
     usd_amount = amount / rates[from_cur]
     result = usd_amount * rates[to_cur]
 
-    # Format result nicely
     if result >= 1:
         result_str = f"{result:,.2f}"
     elif result >= 0.01:
@@ -1185,11 +1218,11 @@ async def _cmd_calc_currency_parse(bot: Bot, biz_id: str, chat_id: int, key: tup
             text=(
                 f'{tg_emoji(Emoji.MONEY, "💱")} <b>Конвертер валют</b>\n\n'
                 f'<code>{amount_str} {from_cur}</code> = <code>{result_str} {to_cur}</code>\n\n'
-                f'📊 Курс: 1 {from_cur} = {rate_str} {to_cur}'
+                f'📊 курс: 1 {from_cur} = {rate_str} {to_cur}'
             ),
             parse_mode="HTML",
             chat_id=chat_id,
-            message_id=status_msg.message_id,
+            message_id=msg_id,
             business_connection_id=biz_id,
         )
     except Exception:
@@ -1567,28 +1600,136 @@ async def on_calc_callback(callback: CallbackQuery, bot: Bot) -> None:
         except Exception:
             pass
 
-        # Show currency categories
-        lines = [
-            f'<b>{tg_emoji(Emoji.MONEY, "💱")} Конвертер валют</b>\n',
-            f'напиши в формате: <code>сумма ИЗ В</code>\n',
-            f'<i>примеры:</i>',
-            f'<code>100 USD RUB</code>',
-            f'<code>1 BTC USD</code>',
-            f'<code>5000 RUB EUR</code>',
-            f'<code>0.5 ETH USDT</code>\n',
-        ]
-        for cat, currencies in CURRENCY_CATEGORIES.items():
-            lines.append(f'<b>{cat}:</b> {", ".join(currencies)}')
-
+        # Show currency category buttons for "FROM" currency
+        buttons = _currency_category_buttons(owner_id, chat_id, "from")
         try:
             msg = await bot.send_message(
                 chat_id=chat_id,
-                text="\n".join(lines),
+                text=(
+                    f'<b>{tg_emoji(Emoji.MONEY, "💱")} Конвертер валют</b>\n\n'
+                    f'из какой валюты конвертируем'
+                ),
                 parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
                 business_connection_id=biz_id,
             )
-            _cmd_state[key] = {"step": "calc_currency_waiting", "data": {"biz_id": biz_id, "prompt_msg_id": msg.message_id}}
+            _cmd_state[key] = {"step": "calc_currency_from", "data": {"biz_id": biz_id, "menu_msg_id": msg.message_id}}
         except Exception:
             _cmd_state.pop(key, None)
+        await callback.answer()
+        return
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("cur:"))
+async def on_currency_callback(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle currency converter inline button navigation."""
+    parts = callback.data.split(":")
+    if len(parts) < 5:
+        await callback.answer()
+        return
+
+    prefix = parts[1]  # "from", "to", or "cancel"
+    value = parts[2]
+    owner_id = int(parts[3])
+    chat_id = int(parts[4])
+    key = (owner_id, chat_id)
+
+    state = _cmd_state.get(key)
+    biz_id = state["data"]["biz_id"] if state else ""
+
+    if prefix == "cancel":
+        _cmd_state.pop(key, None)
+        await callback.answer("отменено")
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        return
+
+    # Category selection (main/crypto/other) -> show currencies
+    if value in ("main", "crypto", "other"):
+        currencies = CATEGORY_MAP[value]
+        buttons = _currency_buttons(currencies, owner_id, chat_id, prefix)
+
+        direction = "из какой валюты" if prefix == "from" else "в какую валюту"
+        extra = ""
+        if prefix == "to" and state:
+            from_cur = state["data"].get("from_cur", "")
+            amount = state["data"].get("amount", 0)
+            extra = f"\n<code>{amount:g} {from_cur}</code> → ..."
+
+        try:
+            await callback.message.edit_text(
+                text=f'<b>{tg_emoji(Emoji.MONEY, "💱")} {direction}</b>{extra}',
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    # "back" -> go back to category selection
+    if value == "back":
+        buttons = _currency_category_buttons(owner_id, chat_id, prefix)
+        direction = "из какой валюты конвертируем" if prefix == "from" else "в какую валюту конвертируем"
+        extra = ""
+        if prefix == "to" and state:
+            from_cur = state["data"].get("from_cur", "")
+            amount = state["data"].get("amount", 0)
+            extra = f"\n<code>{amount:g} {from_cur}</code> → ..."
+
+        try:
+            await callback.message.edit_text(
+                text=f'<b>{tg_emoji(Emoji.MONEY, "💱")} Конвертер валют</b>\n\n{direction}{extra}',
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    # Currency selected
+    currency = value.upper()
+
+    if prefix == "from":
+        # FROM currency selected -> ask for amount
+        try:
+            await callback.message.edit_text(
+                text=(
+                    f'<b>{tg_emoji(Emoji.MONEY, "💱")} Выбрано: {currency}</b>\n\n'
+                    f'напиши сумму\n'
+                    f'<i>например: 100, 0.5, 1500</i>'
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        _cmd_state[key] = {
+            "step": "calc_currency_amount",
+            "data": {"biz_id": biz_id, "from_cur": currency, "prompt_msg_id": callback.message.message_id},
+        }
+        await callback.answer(f"выбрано: {currency}")
+        return
+
+    if prefix == "to":
+        # TO currency selected -> do the conversion
+        if not state:
+            await callback.answer("истекло")
+            return
+        from_cur = state["data"].get("from_cur", "USD")
+        amount = state["data"].get("amount", 0)
+        _cmd_state.pop(key, None)
+
+        try:
+            await callback.message.edit_text(
+                text=f'{tg_emoji(Emoji.LOADING, "🔄")} считаю курс...',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+        await _do_currency_convert(bot, biz_id, chat_id, from_cur, currency, amount, callback.message.message_id)
         await callback.answer()
         return
