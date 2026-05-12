@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Bot, Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import BusinessConnection, Message
 
@@ -35,14 +35,12 @@ async def cmd_start(message: Message, db: Database) -> None:
 
 
 @router.business_connection()
-async def on_business_connection(event: BusinessConnection, db: Database) -> None:
+async def on_business_connection(event: BusinessConnection, db: Database, bot: Bot) -> None:
     user_id = event.user.id
     await db.upsert_user(user_id)
 
-    if event.is_enabled and not event.is_deleted:
+    if event.is_enabled:
         await db.set_business_connected(user_id, event.id, connected=True)
-        from aiogram import Bot
-        bot: Bot = event.bot
         await bot.send_message(
             chat_id=event.user_chat_id,
             text=(
