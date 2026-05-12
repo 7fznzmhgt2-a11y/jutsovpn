@@ -4,10 +4,18 @@ import logging
 import os
 
 from aiogram import Bot, Router
-from aiogram.types import FSInputFile, Message, ReactionTypeEmoji
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReactionTypeEmoji,
+)
 
 from bot.config import CONTEXT_MESSAGES, DEFAULT_API_URL, DEFAULT_MODEL, DEFAULT_PROMPT
 from bot.database import Database
+from bot.emoji import Emoji, tg_emoji
 from bot.services.ai_service import get_ai_response
 from bot.services.soundcloud import download_soundcloud, search_soundcloud
 
@@ -320,46 +328,57 @@ async def _handle_owner_commands(
         try:
             await bot.send_message(
                 chat_id=chat_id,
-                text="какую песню ищем",
+                text=(
+                    f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} SoundCloud</b>\n\n'
+                    f'{tg_emoji(Emoji.WRITE, "✍")} какую песню ищем'
+                ),
+                parse_mode="HTML",
                 business_connection_id=biz_id,
             )
         except Exception:
             pass
-        _cmd_state[key] = {"step": "sc_waiting_query", "data": {}}
+        _cmd_state[key] = {"step": "sc_waiting_query", "data": {"biz_id": biz_id}}
         return True
 
     # Waiting for song name
     if state and state["step"] == "sc_waiting_query":
         query = text.strip()
-        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        biz = state["data"].get("biz_id", biz_id)
+        await _delete_business_msg(bot, biz, chat_id, message.message_id)
 
         # Send searching status
         try:
             status_msg = await bot.send_message(
                 chat_id=chat_id,
-                text=f"ищу {query}...",
-                business_connection_id=biz_id,
+                text=(
+                    f'{tg_emoji(Emoji.LOADING, "🔄")} ищу <b>{query}</b>...'
+                ),
+                parse_mode="HTML",
+                business_connection_id=biz,
             )
         except Exception:
             _cmd_state.pop(key, None)
             return True
 
-        results = await search_soundcloud(query, limit=10)
+        results = await search_soundcloud(query, limit=8)
         if not results:
             try:
                 await bot.edit_message_text(
-                    text=f"ничего не нашел по {query}",
+                    text=(
+                        f'{tg_emoji(Emoji.CROSS, "❌")} ничего не нашел по <b>{query}</b>'
+                    ),
+                    parse_mode="HTML",
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
-                    business_connection_id=biz_id,
+                    business_connection_id=biz,
                 )
             except Exception:
                 pass
             _cmd_state.pop(key, None)
             return True
 
-        # Build list
-        lines = []
+        # Build list text with premium emoji
+        lines = [f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} Результаты по {query}:</b>\n']
         for i, track in enumerate(results, 1):
             dur = ""
             if track.get("duration"):
@@ -368,119 +387,178 @@ async def _handle_owner_commands(
             uploader = f" — {track['uploader']}" if track.get("uploader") else ""
             lines.append(f"{i}. {track['title']}{uploader}{dur}")
 
-        list_text = "\n".join(lines) + "\n\nнапиши номер"
+        list_text = "\n".join(lines)
+
+        # Build inline keyboard with buttons for each track
+        buttons = []
+        for i, track in enumerate(results):
+            title_short = track["title"][:30]
+            buttons.append([InlineKeyboardButton(
+                text=f"{i + 1}. {title_short}",
+                callback_data=f"sc:pick:{key[0]}:{key[1]}:{i}",
+                icon_custom_emoji_id=Emoji.DOWNLOAD,
+            )])
+        buttons.append([InlineKeyboardButton(
+            text="отмена",
+            callback_data=f"sc:cancel:{key[0]}:{key[1]}",
+            icon_custom_emoji_id=Emoji.CROSS,
+        )])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
         try:
             await bot.edit_message_text(
                 text=list_text,
+                parse_mode="HTML",
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
-                business_connection_id=biz_id,
+                reply_markup=kb,
+                business_connection_id=biz,
             )
         except Exception:
             pass
 
+        # Save results in state for callback handler
         _cmd_state[key] = {
             "step": "sc_waiting_pick",
-            "data": {"results": results, "status_msg_id": status_msg.message_id},
+            "data": {
+                "results": results,
+                "status_msg_id": status_msg.message_id,
+                "biz_id": biz,
+            },
         }
         return True
 
-    # Waiting for number pick
+    # Text-based number pick fallback (if inline buttons don't work)
     if state and state["step"] == "sc_waiting_pick":
-        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        biz = state["data"].get("biz_id", biz_id)
+        await _delete_business_msg(bot, biz, chat_id, message.message_id)
 
         results = state["data"]["results"]
         status_msg_id = state["data"].get("status_msg_id")
 
-        # Parse number
         try:
             pick = int(text.strip())
         except ValueError:
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="напиши номер от 1 до " + str(len(results)),
-                    business_connection_id=biz_id,
-                )
-            except Exception:
-                pass
             return True
 
         if pick < 1 or pick > len(results):
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"от 1 до {len(results)}",
-                    business_connection_id=biz_id,
-                )
-            except Exception:
-                pass
             return True
 
         track = results[pick - 1]
         _cmd_state.pop(key, None)
 
-        # Delete the list message
-        if status_msg_id:
-            await _delete_business_msg(bot, biz_id, chat_id, status_msg_id)
-
-        # Send downloading status
-        try:
-            dl_msg = await bot.send_message(
-                chat_id=chat_id,
-                text=f"скачиваю {track['title']}...",
-                business_connection_id=biz_id,
-            )
-        except Exception:
-            return True
-
-        file_path = await download_soundcloud(track["url"])
-        if not file_path:
-            try:
-                await bot.edit_message_text(
-                    text=f"не получилось скачать",
-                    chat_id=chat_id,
-                    message_id=dl_msg.message_id,
-                    business_connection_id=biz_id,
-                )
-            except Exception:
-                pass
-            return True
-
-        # Delete status and send audio
-        await _delete_business_msg(bot, biz_id, chat_id, dl_msg.message_id)
-
-        try:
-            audio_file = FSInputFile(file_path, filename=os.path.basename(file_path))
-            await bot.send_audio(
-                chat_id=chat_id,
-                audio=audio_file,
-                title=track["title"],
-                performer=track.get("uploader", ""),
-                business_connection_id=biz_id,
-            )
-        except Exception:
-            logger.exception("Failed to send audio")
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"не смог отправить",
-                    business_connection_id=biz_id,
-                )
-            except Exception:
-                pass
-        finally:
-            try:
-                if file_path:
-                    os.unlink(file_path)
-                    os.rmdir(os.path.dirname(file_path))
-            except Exception:
-                pass
-
+        await _sc_download_and_send(bot, biz, chat_id, track, status_msg_id)
         return True
 
     return False
+
+
+async def _sc_download_and_send(
+    bot: Bot, biz_id: str, chat_id: int, track: dict, list_msg_id: int | None = None
+) -> None:
+    """Download a SoundCloud track and send it to the chat."""
+    # Delete the list message
+    if list_msg_id:
+        await _delete_business_msg(bot, biz_id, chat_id, list_msg_id)
+
+    # Send downloading status
+    try:
+        dl_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'{tg_emoji(Emoji.LOADING, "🔄")} скачиваю '
+                f'<b>{track["title"]}</b>...'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        return
+
+    file_path = await download_soundcloud(track["url"])
+    if not file_path:
+        try:
+            await bot.edit_message_text(
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось скачать',
+                parse_mode="HTML",
+                chat_id=chat_id,
+                message_id=dl_msg.message_id,
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    await _delete_business_msg(bot, biz_id, chat_id, dl_msg.message_id)
+
+    try:
+        audio_file = FSInputFile(file_path, filename=os.path.basename(file_path))
+        await bot.send_audio(
+            chat_id=chat_id,
+            audio=audio_file,
+            title=track["title"],
+            performer=track.get("uploader", ""),
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        logger.exception("Failed to send audio")
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не смог отправить',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+    finally:
+        try:
+            if file_path:
+                os.unlink(file_path)
+                os.rmdir(os.path.dirname(file_path))
+        except Exception:
+            pass
+
+
+# Callback handler for SoundCloud inline buttons
+@router.callback_query(lambda c: c.data and c.data.startswith("sc:"))
+async def on_sc_callback(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle SoundCloud pick/cancel inline button presses."""
+    data = callback.data
+    parts = data.split(":")
+
+    if parts[1] == "cancel":
+        owner_id = int(parts[2])
+        chat_id = int(parts[3])
+        key = (owner_id, chat_id)
+        state = _cmd_state.pop(key, None)
+        if state and state["data"].get("status_msg_id"):
+            biz = state["data"].get("biz_id", "")
+            await _delete_business_msg(bot, biz, chat_id, state["data"]["status_msg_id"])
+        await callback.answer("отменено")
+        return
+
+    if parts[1] == "pick":
+        owner_id = int(parts[2])
+        chat_id = int(parts[3])
+        pick_idx = int(parts[4])
+        key = (owner_id, chat_id)
+        state = _cmd_state.pop(key, None)
+        if not state:
+            await callback.answer("истекло")
+            return
+
+        results = state["data"].get("results", [])
+        if pick_idx < 0 or pick_idx >= len(results):
+            await callback.answer("ошибка")
+            return
+
+        track = results[pick_idx]
+        biz = state["data"].get("biz_id", "")
+        status_msg_id = state["data"].get("status_msg_id")
+
+        await callback.answer(f"скачиваю {track['title'][:30]}...")
+        await _sc_download_and_send(bot, biz, chat_id, track, status_msg_id)
 
 
 async def _resolve_owner(db: Database, business_id: str) -> int | None:
