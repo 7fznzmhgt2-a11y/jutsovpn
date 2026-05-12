@@ -123,7 +123,7 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
 
     # ── Owner commands (.sc, etc) ───────────────────────────────────
     if is_owner_message and text:
-        handled = await _handle_owner_commands(message, bot, biz_id, chat_id, text)
+        handled = await _handle_owner_commands(message, bot, biz_id, chat_id, text, owner_id)
         if handled:
             return
         return  # Don't auto-reply to own messages
@@ -288,25 +288,52 @@ async def on_group_message(message: Message, db: Database, bot: Bot) -> None:
         logger.info("Group saved: chat=%s from=%s text=%s", chat_id, sender_name, content_for_history[:50])
 
 
+# In-memory state for multi-step commands per chat
+# Key: (owner_id, chat_id) -> {"step": str, "data": dict}
+_cmd_state: dict[tuple[int, int], dict] = {}
+
+
+async def _delete_business_msg(bot: Bot, biz_id: str, chat_id: int, msg_id: int) -> None:
+    """Try to delete a message in a business chat."""
+    try:
+        await bot.delete_business_messages(
+            business_connection_id=biz_id,
+            message_ids=[msg_id],
+        )
+    except Exception:
+        logger.debug("Could not delete msg %s in chat %s", msg_id, chat_id)
+
+
 async def _handle_owner_commands(
-    message: Message, bot: Bot, biz_id: str, chat_id: int, text: str
+    message: Message, bot: Bot, biz_id: str, chat_id: int, text: str, owner_id: int
 ) -> bool:
     """Handle owner dot-commands like .sc — returns True if handled."""
     lower = text.strip().lower()
+    key = (owner_id, chat_id)
 
-    # .sc <query> — SoundCloud search & download
-    if lower.startswith(".sc ") or lower.startswith(". sc "):
-        query = text.strip()[3:].strip() if lower.startswith(".sc") else text.strip()[4:].strip()
-        if not query:
-            return False
+    # Check if we're in a multi-step flow
+    state = _cmd_state.get(key)
 
-        # Delete the command message
+    # .sc — start SoundCloud flow
+    if lower == ".sc" or lower == ". sc":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+            await bot.send_message(
+                chat_id=chat_id,
+                text="какую песню ищем",
+                business_connection_id=biz_id,
+            )
         except Exception:
             pass
+        _cmd_state[key] = {"step": "sc_waiting_query", "data": {}}
+        return True
 
-        # Send searching message
+    # Waiting for song name
+    if state and state["step"] == "sc_waiting_query":
+        query = text.strip()
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+
+        # Send searching status
         try:
             status_msg = await bot.send_message(
                 chat_id=chat_id,
@@ -314,27 +341,38 @@ async def _handle_owner_commands(
                 business_connection_id=biz_id,
             )
         except Exception:
+            _cmd_state.pop(key, None)
             return True
 
-        # Search SoundCloud
-        results = await search_soundcloud(query, limit=5)
+        results = await search_soundcloud(query, limit=10)
         if not results:
             try:
                 await bot.edit_message_text(
-                    text=f"ничего не нашел по запросу {query}",
+                    text=f"ничего не нашел по {query}",
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
                     business_connection_id=biz_id,
                 )
             except Exception:
                 pass
+            _cmd_state.pop(key, None)
             return True
 
-        # Download the first result
-        track = results[0]
+        # Build list
+        lines = []
+        for i, track in enumerate(results, 1):
+            dur = ""
+            if track.get("duration"):
+                m, s = divmod(int(track["duration"]), 60)
+                dur = f" [{m}:{s:02d}]"
+            uploader = f" — {track['uploader']}" if track.get("uploader") else ""
+            lines.append(f"{i}. {track['title']}{uploader}{dur}")
+
+        list_text = "\n".join(lines) + "\n\nнапиши номер"
+
         try:
             await bot.edit_message_text(
-                text=f"скачиваю {track['title']}...",
+                text=list_text,
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
                 business_connection_id=biz_id,
@@ -342,24 +380,76 @@ async def _handle_owner_commands(
         except Exception:
             pass
 
-        file_path = await download_soundcloud(track["url"])
-        if not file_path:
+        _cmd_state[key] = {
+            "step": "sc_waiting_pick",
+            "data": {"results": results, "status_msg_id": status_msg.message_id},
+        }
+        return True
+
+    # Waiting for number pick
+    if state and state["step"] == "sc_waiting_pick":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+
+        results = state["data"]["results"]
+        status_msg_id = state["data"].get("status_msg_id")
+
+        # Parse number
+        try:
+            pick = int(text.strip())
+        except ValueError:
             try:
-                await bot.edit_message_text(
-                    text=f"не получилось скачать {track['title']}",
+                await bot.send_message(
                     chat_id=chat_id,
-                    message_id=status_msg.message_id,
+                    text="напиши номер от 1 до " + str(len(results)),
                     business_connection_id=biz_id,
                 )
             except Exception:
                 pass
             return True
 
-        # Send the audio file
+        if pick < 1 or pick > len(results):
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"от 1 до {len(results)}",
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return True
+
+        track = results[pick - 1]
+        _cmd_state.pop(key, None)
+
+        # Delete the list message
+        if status_msg_id:
+            await _delete_business_msg(bot, biz_id, chat_id, status_msg_id)
+
+        # Send downloading status
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+            dl_msg = await bot.send_message(
+                chat_id=chat_id,
+                text=f"скачиваю {track['title']}...",
+                business_connection_id=biz_id,
+            )
         except Exception:
-            pass
+            return True
+
+        file_path = await download_soundcloud(track["url"])
+        if not file_path:
+            try:
+                await bot.edit_message_text(
+                    text=f"не получилось скачать",
+                    chat_id=chat_id,
+                    message_id=dl_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return True
+
+        # Delete status and send audio
+        await _delete_business_msg(bot, biz_id, chat_id, dl_msg.message_id)
 
         try:
             audio_file = FSInputFile(file_path, filename=os.path.basename(file_path))
@@ -375,13 +465,12 @@ async def _handle_owner_commands(
             try:
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"не смог отправить {track['title']}",
+                    text=f"не смог отправить",
                     business_connection_id=biz_id,
                 )
             except Exception:
                 pass
         finally:
-            # Cleanup temp file
             try:
                 if file_path:
                     os.unlink(file_path)
