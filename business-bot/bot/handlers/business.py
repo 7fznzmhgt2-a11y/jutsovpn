@@ -21,11 +21,20 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
     """Process every business-chat message — store everything."""
     biz_id = message.business_connection_id
     if not biz_id:
+        logger.info("No business_connection_id, skipping")
         return
 
     owner_id = await _resolve_owner(db, biz_id)
     if owner_id is None:
+        logger.warning("Could not resolve owner for biz_id=%s", biz_id)
         return
+
+    logger.info(
+        "Business msg: chat=%s from=%s text=%s",
+        message.chat.id,
+        message.from_user.first_name if message.from_user else "?",
+        (message.text or message.caption or "<media>")[:50],
+    )
 
     chat_id = message.chat.id
     is_owner_message = message.from_user and message.from_user.id == owner_id
@@ -108,6 +117,7 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
     if content_for_history:
         role = "assistant" if is_owner_message else "user"
         await db.save_message(owner_id, chat_id, role, content_for_history)
+        logger.info("Saved to DB: chat=%s role=%s text=%s", chat_id, role, content_for_history[:50])
 
     # ── Auto-reply logic ───────────────────────────────────────────
     if is_owner_message:
@@ -132,6 +142,19 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
     prompt = user["prompt"] or DEFAULT_PROMPT
     model = user["model"] or DEFAULT_MODEL
     api_url = user["api_url"] or DEFAULT_API_URL
+
+    # Get owner's real name from Telegram profile
+    try:
+        owner_chat = await bot.get_chat(owner_id)
+        owner_name = owner_chat.first_name or ""
+        if owner_chat.last_name:
+            owner_name += " " + owner_chat.last_name
+    except Exception:
+        owner_name = ""
+
+    # Inject owner name into prompt
+    if owner_name:
+        prompt = f"Тебя зовут {owner_name}. " + prompt
 
     # Build context from history
     history = await db.get_history(owner_id, chat_id, limit=CONTEXT_MESSAGES)
