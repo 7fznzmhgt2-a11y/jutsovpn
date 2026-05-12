@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Bot, Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -44,12 +44,12 @@ async def show_chats(callback: CallbackQuery, db: Database) -> None:
 async def chats_add(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(
         f"<b>{tg_emoji(Emoji.ADD_TEXT, '🔡')} Добавить чат</b>\n\n"
-        f"{tg_emoji(Emoji.INFO, 'ℹ')} Отправьте ID чата и название "
-        f"(через пробел).\n\n"
-        f"<blockquote>Пример: <code>123456789 Иван Петров</code></blockquote>\n\n"
-        f"{tg_emoji(Emoji.INFO, 'ℹ')} Или просто отправьте ID чата — "
-        f"бот также автоматически добавляет чаты при получении "
-        f"бизнес-сообщений.",
+        f"{tg_emoji(Emoji.INFO, 'ℹ')} Отправьте:\n"
+        f"1. Перешлите любое сообщение из чата\n"
+        f"2. Или ID чата и название через пробел\n"
+        f"3. Или @username чата\n\n"
+        f"<blockquote>Бот автоматически добавляет все бизнес-чаты. "
+        f"Группы тоже будут читаться если добавить бота туда.</blockquote>",
         parse_mode="HTML",
         reply_markup=chats_add_cancel_kb(),
     )
@@ -58,22 +58,73 @@ async def chats_add(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(ChatStates.waiting_for_chat_id)
-async def chat_id_received(message: Message, state: FSMContext, db: Database) -> None:
+async def chat_id_received(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
+    # Handle forwarded messages
+    if message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+        chat_name = message.forward_from_chat.title or message.forward_from_chat.first_name or str(chat_id)
+        await db.add_monitored_chat(message.from_user.id, chat_id, chat_name)
+        await state.clear()
+        await message.answer(
+            f"{tg_emoji(Emoji.CHECK, '✅')} Чат <b>{chat_name}</b> добавлен",
+            parse_mode="HTML",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    if message.forward_from:
+        chat_id = message.forward_from.id
+        chat_name = message.forward_from.first_name or str(chat_id)
+        if message.forward_from.last_name:
+            chat_name += " " + message.forward_from.last_name
+        await db.add_monitored_chat(message.from_user.id, chat_id, chat_name)
+        await state.clear()
+        await message.answer(
+            f"{tg_emoji(Emoji.CHECK, '✅')} Чат <b>{chat_name}</b> добавлен",
+            parse_mode="HTML",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
     text = (message.text or "").strip()
     if not text:
         await message.answer(
-            f"{tg_emoji(Emoji.CROSS, '❌')} Отправьте ID чата.",
+            f"{tg_emoji(Emoji.CROSS, '❌')} Отправьте ID чата или перешлите сообщение",
             parse_mode="HTML",
             reply_markup=chats_add_cancel_kb(),
         )
         return
 
+    # Handle @username
+    if text.startswith("@"):
+        try:
+            chat_obj = await bot.get_chat(text)
+            chat_id = chat_obj.id
+            chat_name = chat_obj.title or chat_obj.first_name or text
+            await db.add_monitored_chat(message.from_user.id, chat_id, chat_name)
+            await state.clear()
+            await message.answer(
+                f"{tg_emoji(Emoji.CHECK, '✅')} Чат <b>{chat_name}</b> добавлен",
+                parse_mode="HTML",
+                reply_markup=main_menu_kb(),
+            )
+            return
+        except Exception:
+            await message.answer(
+                f"{tg_emoji(Emoji.CROSS, '❌')} Не удалось найти чат {text}. "
+                f"Попробуйте переслать сообщение из чата или отправить ID",
+                parse_mode="HTML",
+                reply_markup=chats_add_cancel_kb(),
+            )
+            return
+
+    # Handle numeric ID
     parts = text.split(maxsplit=1)
     try:
         chat_id = int(parts[0])
     except ValueError:
         await message.answer(
-            f"{tg_emoji(Emoji.CROSS, '❌')} ID чата должен быть числом.",
+            f"{tg_emoji(Emoji.CROSS, '❌')} ID чата должен быть числом или @username",
             parse_mode="HTML",
             reply_markup=chats_add_cancel_kb(),
         )
@@ -84,7 +135,7 @@ async def chat_id_received(message: Message, state: FSMContext, db: Database) ->
     await state.clear()
 
     await message.answer(
-        f"{tg_emoji(Emoji.CHECK, '✅')} Чат <b>{chat_name}</b> добавлен!",
+        f"{tg_emoji(Emoji.CHECK, '✅')} Чат <b>{chat_name}</b> добавлен",
         parse_mode="HTML",
         reply_markup=main_menu_kb(),
     )
