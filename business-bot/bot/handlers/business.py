@@ -1,13 +1,15 @@
 """Handle incoming business messages — read, store ALL content, and auto-reply via AI."""
 
 import logging
+import os
 
 from aiogram import Bot, Router
-from aiogram.types import Message, ReactionTypeEmoji
+from aiogram.types import FSInputFile, Message, ReactionTypeEmoji
 
 from bot.config import CONTEXT_MESSAGES, DEFAULT_API_URL, DEFAULT_MODEL, DEFAULT_PROMPT
 from bot.database import Database
 from bot.services.ai_service import get_ai_response
+from bot.services.soundcloud import download_soundcloud, search_soundcloud
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +121,13 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
         await db.save_message(owner_id, chat_id, role, content_for_history)
         logger.info("Saved to DB: chat=%s role=%s text=%s", chat_id, role, content_for_history[:50])
 
-    # ── Auto-reply logic ───────────────────────────────────────────
+    # ── Owner commands (.sc, etc) ───────────────────────────────────
+    if is_owner_message and text:
+        handled = await _handle_owner_commands(message, bot, biz_id, chat_id, text)
+        if handled:
+            return
+        return  # Don't auto-reply to own messages
+
     if is_owner_message:
         return
 
@@ -278,6 +286,112 @@ async def on_group_message(message: Message, db: Database, bot: Bot) -> None:
     if content_for_history:
         await db.save_message(owner_id, chat_id, "user", content_for_history)
         logger.info("Group saved: chat=%s from=%s text=%s", chat_id, sender_name, content_for_history[:50])
+
+
+async def _handle_owner_commands(
+    message: Message, bot: Bot, biz_id: str, chat_id: int, text: str
+) -> bool:
+    """Handle owner dot-commands like .sc — returns True if handled."""
+    lower = text.strip().lower()
+
+    # .sc <query> — SoundCloud search & download
+    if lower.startswith(".sc ") or lower.startswith(". sc "):
+        query = text.strip()[3:].strip() if lower.startswith(".sc") else text.strip()[4:].strip()
+        if not query:
+            return False
+
+        # Delete the command message
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+        except Exception:
+            pass
+
+        # Send searching message
+        try:
+            status_msg = await bot.send_message(
+                chat_id=chat_id,
+                text=f"ищу {query}...",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            return True
+
+        # Search SoundCloud
+        results = await search_soundcloud(query, limit=5)
+        if not results:
+            try:
+                await bot.edit_message_text(
+                    text=f"ничего не нашел по запросу {query}",
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return True
+
+        # Download the first result
+        track = results[0]
+        try:
+            await bot.edit_message_text(
+                text=f"скачиваю {track['title']}...",
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+        file_path = await download_soundcloud(track["url"])
+        if not file_path:
+            try:
+                await bot.edit_message_text(
+                    text=f"не получилось скачать {track['title']}",
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return True
+
+        # Send the audio file
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+        except Exception:
+            pass
+
+        try:
+            audio_file = FSInputFile(file_path, filename=os.path.basename(file_path))
+            await bot.send_audio(
+                chat_id=chat_id,
+                audio=audio_file,
+                title=track["title"],
+                performer=track.get("uploader", ""),
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            logger.exception("Failed to send audio")
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"не смог отправить {track['title']}",
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+        finally:
+            # Cleanup temp file
+            try:
+                if file_path:
+                    os.unlink(file_path)
+                    os.rmdir(os.path.dirname(file_path))
+            except Exception:
+                pass
+
+        return True
+
+    return False
 
 
 async def _resolve_owner(db: Database, business_id: str) -> int | None:

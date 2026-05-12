@@ -1,8 +1,40 @@
+import json
 import logging
+import os
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# Load brain style data if available
+_brain_style: dict = {}
+_brain_style_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "brain_style.json"
+)
+try:
+    with open(_brain_style_path) as _f:
+        _brain_style = json.load(_f)
+    logger.info("Loaded brain style: %d slangs, %d samples", 
+                len(_brain_style.get("top_slangs", [])),
+                len(_brain_style.get("sample_messages", [])))
+except FileNotFoundError:
+    pass
+
+# Build brain style instructions
+_BRAIN_INSTRUCTIONS = ""
+if _brain_style:
+    slangs = ", ".join(_brain_style.get("top_slangs", [])[:40])
+    samples = "\n".join(f"- {m}" for m in _brain_style.get("sample_messages", [])[:30])
+    convos = "\n".join(
+        f"собеседник: {t[:80]}\nты: {r[:80]}"
+        for t, r in _brain_style.get("conversation_examples", [])[:20]
+    )
+    _BRAIN_INSTRUCTIONS = (
+        f"\n\nТВОЙ РЕАЛЬНЫЙ СТИЛЬ ОБЩЕНИЯ (ОБЯЗАТЕЛЬНО КОПИРУЙ):\n"
+        f"Частые слова: {slangs}\n\n"
+        f"Примеры твоих сообщений:\n{samples}\n\n"
+        f"Примеры диалогов:\n{convos}"
+    )
 
 # Extra system instructions for context awareness and speech style
 CONTEXT_INSTRUCTIONS = (
@@ -13,18 +45,17 @@ CONTEXT_INSTRUCTIONS = (
     "Если спросят имя — назови имя владельца аккаунта (из контекста чата). "
     "Ты ЖИВОЙ ЧЕЛОВЕК.\n"
     "1. КОНТЕКСТ: Продолжай текущую тему. Не перескакивай на другие темы.\n"
-    "2. СТИЛЬ РЕЧИ: Копируй манеру речи из прочитанных чатов. Те же слова, "
-    "сленг и обороты.\n"
-    "3. МАТЫ: Можешь использовать мат умеренно, как обычный человек.\n"
-    "4. ПУНКТУАЦИЯ: НЕ используй восклицательные знаки (!) и вопросительные знаки (?). "
-    "Пиши без них. Вместо '?' просто пиши вопрос без знака. "
-    "Вместо '!' просто пиши без знака. Никаких '...', '—', ':)' — "
-    "только простой текст, запятые и точки если надо.\n"
-    "5. ПРОСТОТА: Пиши максимально просто и коротко. Как пацан в чате. "
-    "Без умных слов, без литературного языка, без длинных предложений. "
-    "1-2 слова в ответе это нормально. 'ага', 'ну да', 'хз', 'норм' — "
-    "вот так надо отвечать. НЕ пиши как робот или как учитель.\n"
-    "6. ПАМЯТЬ: Помни всё что обсуждалось ранее в этом чате."
+    "2. СТИЛЬ РЕЧИ: Пиши ТОЧНО как в примерах ниже. С маленькой буквы, "
+    "с матами, короткими фразами. Копируй стиль 1 в 1.\n"
+    "3. МАТЫ: Используй мат как в примерах — бля, хз, нахуй, пиздец, хуйня. "
+    "Это твой обычный стиль общения.\n"
+    "4. ПУНКТУАЦИЯ: Минимум знаков препинания. Без ! и без ?. "
+    "Запятые почти не ставишь. Точку редко. Пишешь без знаков в конце.\n"
+    "5. ПРОСТОТА: 1-3 слова обычно. Без умных слов. 'хз', 'пон', 'норм', "
+    "'ну да', 'бля', 'а хуй знает' — вот твой уровень. "
+    "НЕ пиши длинные ответы. НЕ пиши как учитель или робот.\n"
+    "6. ОШИБКИ: Можешь делать опечатки. Пишешь как попало, без заморочек.\n"
+    "7. ПАМЯТЬ: Помни всё что обсуждалось ранее."
 )
 
 
@@ -40,10 +71,10 @@ async def get_ai_response(
     if not api_key:
         return None
 
-    full_prompt = system_prompt + CONTEXT_INSTRUCTIONS
+    full_prompt = system_prompt + CONTEXT_INSTRUCTIONS + _BRAIN_INSTRUCTIONS
     if learned_style:
         full_prompt += (
-            "\n\nПримеры стиля общения из чатов (копируй этот стиль):\n"
+            "\n\nДоп. примеры из текущего чата:\n"
             + learned_style
         )
 
