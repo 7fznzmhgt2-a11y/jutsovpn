@@ -28,7 +28,7 @@ async def search_soundcloud(query: str, limit: int = 5) -> list[dict]:
                 data = json.loads(line)
                 results.append({
                     "title": data.get("title", "Unknown"),
-                    "url": data.get("url") or data.get("webpage_url", ""),
+                    "url": data.get("webpage_url") or data.get("url", ""),
                     "duration": data.get("duration", 0),
                     "uploader": data.get("uploader", ""),
                 })

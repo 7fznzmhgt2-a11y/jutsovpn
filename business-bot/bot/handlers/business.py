@@ -321,6 +321,7 @@ async def _handle_owner_commands(
 
     # Check if we're in a multi-step flow
     state = _cmd_state.get(key)
+    logger.info("CMD check: key=%s text=%s state=%s", key, text[:30], state)
 
     # .sc — start SoundCloud flow
     if lower == ".sc" or lower == ". sc":
