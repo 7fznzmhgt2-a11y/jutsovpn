@@ -1,7 +1,12 @@
-"""Handle incoming business messages — read, store ALL content, and auto-reply via AI."""
+"""Handle incoming business messages — command-only mode (.sc, .sv, .ping, .gift, etc)."""
 
+import asyncio
+import json
 import logging
 import os
+import re
+import tempfile
+import time
 
 from aiogram import Bot, Router
 from aiogram.types import (
@@ -10,295 +15,22 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    ReactionTypeEmoji,
 )
 
-from bot.config import CONTEXT_MESSAGES, DEFAULT_API_URL, DEFAULT_MODEL, DEFAULT_PROMPT
 from bot.database import Database
 from bot.emoji import Emoji, tg_emoji
-from bot.services.ai_service import get_ai_response
 from bot.services.soundcloud import download_soundcloud, search_soundcloud
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
-PREMIUM_REACTIONS = ["👍", "❤", "🔥", "🎉", "👏", "😎", "🤝", "💯", "⚡", "🏆"]
-
-
-@router.business_message()
-async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
-    """Process every business-chat message — store everything."""
-    biz_id = message.business_connection_id
-    if not biz_id:
-        logger.info("No business_connection_id, skipping")
-        return
-
-    owner_id = await _resolve_owner(db, biz_id)
-    if owner_id is None:
-        logger.warning("Could not resolve owner for biz_id=%s", biz_id)
-        return
-
-    logger.info(
-        "Business msg: chat=%s from=%s text=%s",
-        message.chat.id,
-        message.from_user.first_name if message.from_user else "?",
-        (message.text or message.caption or "<media>")[:50],
-    )
-
-    chat_id = message.chat.id
-    is_owner_message = message.from_user and message.from_user.id == owner_id
-
-    # Build sender info
-    sender_id = message.from_user.id if message.from_user else 0
-    sender_name = ""
-    if message.from_user:
-        sender_name = message.from_user.first_name or ""
-        if message.from_user.last_name:
-            sender_name += " " + message.from_user.last_name
-
-    # Auto-register the chat
-    chat_name = ""
-    if message.chat.first_name:
-        chat_name = message.chat.first_name
-        if message.chat.last_name:
-            chat_name += " " + message.chat.last_name
-    elif message.chat.title:
-        chat_name = message.chat.title
-    await db.add_monitored_chat(owner_id, chat_id, chat_name)
-
-    # ── Store ALL content types ────────────────────────────────────
-    text = message.text or ""
-    caption = message.caption or ""
-
-    if message.text:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="text", text_content=text,
-        )
-
-    if message.photo:
-        photo = message.photo[-1]  # highest resolution
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="photo", file_id=photo.file_id, caption=caption,
-        )
-
-    if message.video:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="video", file_id=message.video.file_id, caption=caption,
-        )
-
-    if message.animation:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="gif", file_id=message.animation.file_id, caption=caption,
-        )
-
-    if message.sticker:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="sticker", file_id=message.sticker.file_id,
-            emoji=message.sticker.emoji or "",
-        )
-
-    if message.voice:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="voice", file_id=message.voice.file_id,
-        )
-
-    if message.video_note:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="video_note", file_id=message.video_note.file_id,
-        )
-
-    if message.document and not message.animation:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="document", file_id=message.document.file_id,
-            caption=caption,
-        )
-
-    # Save text to message history for AI context
-    content_for_history = text or caption
-    if content_for_history:
-        role = "assistant" if is_owner_message else "user"
-        await db.save_message(owner_id, chat_id, role, content_for_history)
-        logger.info("Saved to DB: chat=%s role=%s text=%s", chat_id, role, content_for_history[:50])
-
-    # ── Owner commands (.sc, etc) ───────────────────────────────────
-    if is_owner_message and text:
-        handled = await _handle_owner_commands(message, bot, biz_id, chat_id, text, owner_id)
-        if handled:
-            return
-        return  # Don't auto-reply to own messages
-
-    if is_owner_message:
-        return
-
-    user = await db.get_user(owner_id)
-    if not user or not user["auto_reply"]:
-        return
-
-    monitored = await db.get_monitored_chats(owner_id)
-    chat_entry = next((c for c in monitored if c["chat_id"] == chat_id), None)
-    if chat_entry and not chat_entry["auto_reply"]:
-        return
-
-    api_key = user["api_key"] or ""
-    if not api_key:
-        return
-
-    if not content_for_history:
-        return
-
-    prompt = user["prompt"] or DEFAULT_PROMPT
-    model = user["model"] or DEFAULT_MODEL
-    api_url = user["api_url"] or DEFAULT_API_URL
-
-    # Get owner's real name from Telegram profile
-    try:
-        owner_chat = await bot.get_chat(owner_id)
-        owner_name = owner_chat.first_name or ""
-        if owner_chat.last_name:
-            owner_name += " " + owner_chat.last_name
-    except Exception:
-        owner_name = ""
-
-    # Inject owner name into prompt
-    if owner_name:
-        prompt = f"Тебя зовут {owner_name}. " + prompt
-
-    # Build context from history
-    history = await db.get_history(owner_id, chat_id, limit=CONTEXT_MESSAGES)
-    context_messages = [{"role": m["role"], "content": m["content"]} for m in history]
-
-    # Build learned style from recent chat messages
-    learned_texts = await db.get_recent_texts_for_learning(owner_id, chat_id, limit=50)
-    learned_style = ""
-    if learned_texts:
-        learned_style = "\n".join(
-            f"{t['sender_name']}: {t['text_content']}" for t in learned_texts[-30:]
-        )
-
-    reply_text = await get_ai_response(
-        api_key=api_key,
-        api_url=api_url,
-        model=model,
-        system_prompt=prompt,
-        messages=context_messages,
-        learned_style=learned_style,
-    )
-
-    if not reply_text:
-        logger.warning("AI returned empty response for chat %s", chat_id)
-        return
-
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=reply_text,
-            business_connection_id=biz_id,
-        )
-        await db.save_message(owner_id, chat_id, "assistant", reply_text)
-    except Exception:
-        logger.exception("Failed to send business reply to chat %s", chat_id)
-
-
-@router.message()
-async def on_group_message(message: Message, db: Database, bot: Bot) -> None:
-    """Read messages from groups/chats where bot is a member — store everything."""
-    # Skip private chats (handled by business_message or /start)
-    if message.chat.type == "private":
-        return
-    # Skip if it's a command
-    if message.text and message.text.startswith("/"):
-        return
-
-    chat_id = message.chat.id
-
-    # Find which user monitors this chat
-    cur = await db.db.execute(
-        "SELECT user_id FROM monitored_chats WHERE chat_id = ?", (chat_id,)
-    )
-    row = await cur.fetchone()
-    if not row:
-        return
-
-    owner_id = row["user_id"]
-
-    sender_id = message.from_user.id if message.from_user else 0
-    sender_name = ""
-    if message.from_user:
-        sender_name = message.from_user.first_name or ""
-        if message.from_user.last_name:
-            sender_name += " " + message.from_user.last_name
-
-    logger.info(
-        "Group msg: chat=%s from=%s text=%s",
-        chat_id, sender_name,
-        (message.text or message.caption or "<media>")[:50],
-    )
-
-    text = message.text or ""
-    caption = message.caption or ""
-
-    if message.text:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="text", text_content=text,
-        )
-    if message.photo:
-        photo = message.photo[-1]
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="photo", file_id=photo.file_id, caption=caption,
-        )
-    if message.video:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="video", file_id=message.video.file_id, caption=caption,
-        )
-    if message.animation:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="gif", file_id=message.animation.file_id, caption=caption,
-        )
-    if message.sticker:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="sticker", file_id=message.sticker.file_id,
-            emoji=message.sticker.emoji or "",
-        )
-    if message.voice:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="voice", file_id=message.voice.file_id,
-        )
-    if message.video_note:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="video_note", file_id=message.video_note.file_id,
-        )
-    if message.document and not message.animation:
-        await db.save_content(
-            owner_id, chat_id, sender_id, sender_name,
-            content_type="document", file_id=message.document.file_id,
-            caption=caption,
-        )
-
-    content_for_history = text or caption
-    if content_for_history:
-        await db.save_message(owner_id, chat_id, "user", content_for_history)
-        logger.info("Group saved: chat=%s from=%s text=%s", chat_id, sender_name, content_for_history[:50])
-
-
 # In-memory state for multi-step commands per chat
 # Key: (owner_id, chat_id) -> {"step": str, "data": dict}
 _cmd_state: dict[tuple[int, int], dict] = {}
+
+
+# ── Helper functions ──────────────────────────────────────────────
 
 
 async def _delete_business_msg(bot: Bot, biz_id: str, chat_id: int, msg_id: int) -> None:
@@ -312,170 +44,438 @@ async def _delete_business_msg(bot: Bot, biz_id: str, chat_id: int, msg_id: int)
         logger.debug("Could not delete msg %s in chat %s", msg_id, chat_id)
 
 
+async def _resolve_owner(db: Database, business_id: str) -> int | None:
+    """Find the user_id who owns this business connection."""
+    cur = await db.db.execute(
+        "SELECT user_id FROM users WHERE business_id = ? AND is_connected = 1",
+        (business_id,),
+    )
+    row = await cur.fetchone()
+    return row["user_id"] if row else None
+
+
+def _format_duration(seconds: float | int) -> str:
+    s = int(seconds)
+    if s >= 3600:
+        h, remainder = divmod(s, 3600)
+        m, sec = divmod(remainder, 60)
+        return f"{h}:{m:02d}:{sec:02d}"
+    m, sec = divmod(s, 60)
+    return f"{m}:{sec:02d}"
+
+
+# ── Main business message handler ────────────────────────────────
+
+
+@router.business_message()
+async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
+    """Process every business-chat message — handle owner commands only."""
+    biz_id = message.business_connection_id
+    if not biz_id:
+        return
+
+    owner_id = await _resolve_owner(db, biz_id)
+    if owner_id is None:
+        return
+
+    chat_id = message.chat.id
+    is_owner_message = message.from_user and message.from_user.id == owner_id
+    text = message.text or ""
+
+    logger.info(
+        "Business msg: chat=%s from=%s owner=%s text=%s",
+        chat_id,
+        message.from_user.first_name if message.from_user else "?",
+        is_owner_message,
+        text[:50],
+    )
+
+    # Only handle owner commands
+    if is_owner_message and text:
+        await _handle_owner_commands(message, bot, biz_id, chat_id, text, owner_id)
+
+
+# ── Command dispatcher ────────────────────────────────────────────
+
+
+COMMANDS_HELP = {
+    ".sc": "скачать музыку с SoundCloud",
+    ".sv": "скачать видео с любой соцсети (YouTube, TikTok, Instagram...)",
+    ".ping": "проверить VPN протокол (vless, vmess, и тд) — пинг, скорость",
+    ".gift": "отправить подарок пользователю в Telegram",
+    ".calc": "калькулятор — посчитать выражение",
+    ".qr": "создать QR-код из текста или ссылки",
+    ".weather": "узнать погоду в городе",
+    ".translate": "перевести текст (авто-определение языка)",
+    ".whois": "информация о домене",
+    ".short": "сократить ссылку",
+    ".commands": "показать все доступные команды",
+}
+
+
 async def _handle_owner_commands(
     message: Message, bot: Bot, biz_id: str, chat_id: int, text: str, owner_id: int
-) -> bool:
-    """Handle owner dot-commands like .sc — returns True if handled."""
+) -> None:
+    """Handle owner dot-commands — dispatch to specific handlers."""
     lower = text.strip().lower()
     key = (owner_id, chat_id)
 
     # Check if we're in a multi-step flow
     state = _cmd_state.get(key)
-    logger.info("CMD check: key=%s text=%s state=%s", key, text[:30], state)
+    logger.info("CMD: key=%s text=%s state_step=%s", key, lower[:30], state["step"] if state else None)
 
-    # .sc — start SoundCloud flow
+    # ── .commands ──
+    if lower == ".commands":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        await _cmd_commands(bot, biz_id, chat_id)
+        return
+
+    # ── .sc ──
     if lower == ".sc" or lower == ". sc":
         await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
-        try:
-            prompt_msg = await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} SoundCloud</b>\n\n'
-                    f'{tg_emoji(Emoji.WRITE, "✍")} какую песню ищем'
-                ),
-                parse_mode="HTML",
-                business_connection_id=biz_id,
-            )
-            prompt_msg_id = prompt_msg.message_id
-        except Exception:
-            prompt_msg_id = None
-        _cmd_state[key] = {"step": "sc_waiting_query", "data": {"biz_id": biz_id, "prompt_msg_id": prompt_msg_id}}
-        return True
+        await _cmd_sc_start(bot, biz_id, chat_id, key)
+        return
 
-    # Waiting for song name
-    if state and state["step"] == "sc_waiting_query":
-        query = text.strip()
+    # ── .sv ──
+    if lower == ".sv" or lower == ". sv":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        await _cmd_sv_start(bot, biz_id, chat_id, key)
+        return
+
+    # ── .ping ──
+    if lower == ".ping" or lower == ". ping":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        await _cmd_ping_start(bot, biz_id, chat_id, key)
+        return
+
+    # ── .gift ──
+    if lower == ".gift" or lower == ". gift":
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        await _cmd_gift_start(bot, biz_id, chat_id, key)
+        return
+
+    # ── .calc ──
+    if lower.startswith(".calc"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        expr = text.strip()[5:].strip()
+        if expr:
+            await _cmd_calc(bot, biz_id, chat_id, expr)
+        else:
+            _cmd_state[key] = {"step": "calc_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.CODE, "🔢")} <b>Калькулятор</b>\n\nнапиши выражение',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── .qr ──
+    if lower.startswith(".qr"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        qr_text = text.strip()[3:].strip()
+        if qr_text:
+            await _cmd_qr(bot, biz_id, chat_id, qr_text)
+        else:
+            _cmd_state[key] = {"step": "qr_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.LINK, "🔗")} <b>QR-код</b>\n\nнапиши текст или ссылку',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── .weather ──
+    if lower.startswith(".weather"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        city = text.strip()[8:].strip()
+        if city:
+            await _cmd_weather(bot, biz_id, chat_id, city)
+        else:
+            _cmd_state[key] = {"step": "weather_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.GEO, "🌍")} <b>Погода</b>\n\nнапиши название города',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── .translate ──
+    if lower.startswith(".translate"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        tr_text = text.strip()[10:].strip()
+        if tr_text:
+            await _cmd_translate(bot, biz_id, chat_id, tr_text)
+        else:
+            _cmd_state[key] = {"step": "translate_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.FONT, "🌐")} <b>Переводчик</b>\n\nнапиши текст для перевода',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── .whois ──
+    if lower.startswith(".whois"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        domain = text.strip()[6:].strip()
+        if domain:
+            await _cmd_whois(bot, biz_id, chat_id, domain)
+        else:
+            _cmd_state[key] = {"step": "whois_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.LINK, "🔍")} <b>WHOIS</b>\n\nнапиши домен',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── .short ──
+    if lower.startswith(".short"):
+        await _delete_business_msg(bot, biz_id, chat_id, message.message_id)
+        url = text.strip()[6:].strip()
+        if url:
+            await _cmd_short(bot, biz_id, chat_id, url)
+        else:
+            _cmd_state[key] = {"step": "short_waiting", "data": {"biz_id": biz_id}}
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=f'{tg_emoji(Emoji.LINK, "🔗")} <b>Сократить ссылку</b>\n\nскинь ссылку',
+                    parse_mode="HTML",
+                    business_connection_id=biz_id,
+                )
+                _cmd_state[key]["data"]["prompt_msg_id"] = msg.message_id
+            except Exception:
+                _cmd_state.pop(key, None)
+        return
+
+    # ── Multi-step state handlers ──
+    if state:
+        step = state["step"]
         biz = state["data"].get("biz_id", biz_id)
         await _delete_business_msg(bot, biz, chat_id, message.message_id)
 
-        # Delete the "какую песню ищем" prompt
-        prompt_msg_id = state["data"].get("prompt_msg_id")
-        if prompt_msg_id:
-            await _delete_business_msg(bot, biz, chat_id, prompt_msg_id)
+        # Delete prompt message
+        prompt_id = state["data"].get("prompt_msg_id")
+        if prompt_id:
+            await _delete_business_msg(bot, biz, chat_id, prompt_id)
 
-        # Send searching status
-        try:
-            status_msg = await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f'{tg_emoji(Emoji.LOADING, "🔄")} ищу <b>{query}</b>...'
-                ),
-                parse_mode="HTML",
-                business_connection_id=biz,
-            )
-        except Exception:
+        if step == "sc_waiting_query":
+            await _cmd_sc_search(bot, biz, chat_id, key, text.strip())
+            return
+
+        if step == "sc_waiting_pick":
+            await _cmd_sc_pick_text(bot, biz, chat_id, key, text.strip(), state)
+            return
+
+        if step == "sv_waiting_url":
+            await _cmd_sv_download(bot, biz, chat_id, key, text.strip())
+            return
+
+        if step == "ping_waiting":
+            await _cmd_ping_run(bot, biz, chat_id, key, text.strip())
+            return
+
+        if step == "gift_waiting_user":
+            await _cmd_gift_pick_user(bot, biz, chat_id, key, text.strip())
+            return
+
+        if step == "calc_waiting":
+            await _cmd_calc(bot, biz, chat_id, text.strip())
             _cmd_state.pop(key, None)
-            return True
+            return
 
-        results = await search_soundcloud(query, limit=8)
-        if not results:
-            try:
-                await bot.edit_message_text(
-                    text=(
-                        f'{tg_emoji(Emoji.CROSS, "❌")} ничего не нашел по <b>{query}</b>'
-                    ),
-                    parse_mode="HTML",
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    business_connection_id=biz,
-                )
-            except Exception:
-                pass
+        if step == "qr_waiting":
+            await _cmd_qr(bot, biz, chat_id, text.strip())
             _cmd_state.pop(key, None)
-            return True
+            return
 
-        # Build list text with premium emoji
-        lines = [f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} Результаты по {query}:</b>\n']
-        for i, track in enumerate(results, 1):
-            dur = ""
-            if track.get("duration"):
-                m, s = divmod(int(track["duration"]), 60)
-                dur = f" [{m}:{s:02d}]"
-            uploader = f" — {track['uploader']}" if track.get("uploader") else ""
-            lines.append(f"{i}. {track['title']}{uploader}{dur}")
+        if step == "weather_waiting":
+            await _cmd_weather(bot, biz, chat_id, text.strip())
+            _cmd_state.pop(key, None)
+            return
 
-        list_text = "\n".join(lines)
+        if step == "translate_waiting":
+            await _cmd_translate(bot, biz, chat_id, text.strip())
+            _cmd_state.pop(key, None)
+            return
 
-        # Build inline keyboard with buttons for each track
-        buttons = []
-        for i, track in enumerate(results):
-            title_short = track["title"][:30]
-            buttons.append([InlineKeyboardButton(
-                text=f"{i + 1}. {title_short}",
-                callback_data=f"sc:pick:{key[0]}:{key[1]}:{i}",
-                icon_custom_emoji_id=Emoji.DOWNLOAD,
-            )])
-        buttons.append([InlineKeyboardButton(
-            text="отмена",
-            callback_data=f"sc:cancel:{key[0]}:{key[1]}",
-            icon_custom_emoji_id=Emoji.CROSS,
-        )])
-        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        if step == "whois_waiting":
+            await _cmd_whois(bot, biz, chat_id, text.strip())
+            _cmd_state.pop(key, None)
+            return
 
+        if step == "short_waiting":
+            await _cmd_short(bot, biz, chat_id, text.strip())
+            _cmd_state.pop(key, None)
+            return
+
+        # Unknown state — clear it
+        _cmd_state.pop(key, None)
+
+
+# ══════════════════════════════════════════════════════════════════
+# .commands
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_commands(bot: Bot, biz_id: str, chat_id: int) -> None:
+    lines = [f'<b>{tg_emoji(Emoji.CODE, "📋")} Все команды:</b>\n']
+    for cmd, desc in COMMANDS_HELP.items():
+        lines.append(f'<b>{cmd}</b> — {desc}')
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="\n".join(lines),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        logger.exception("Failed to send commands list")
+
+
+# ══════════════════════════════════════════════════════════════════
+# .sc — SoundCloud
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_sc_start(bot: Bot, biz_id: str, chat_id: int, key: tuple) -> None:
+    try:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} SoundCloud</b>\n\n'
+                f'{tg_emoji(Emoji.WRITE, "✍")} какую песню ищем'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+        _cmd_state[key] = {
+            "step": "sc_waiting_query",
+            "data": {"biz_id": biz_id, "prompt_msg_id": msg.message_id},
+        }
+    except Exception:
+        logger.exception("sc_start failed")
+
+
+async def _cmd_sc_search(bot: Bot, biz_id: str, chat_id: int, key: tuple, query: str) -> None:
+    try:
+        status_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=f'{tg_emoji(Emoji.LOADING, "🔄")} ищу <b>{query}</b>...',
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        _cmd_state.pop(key, None)
+        return
+
+    results = await search_soundcloud(query, limit=8)
+    if not results:
         try:
             await bot.edit_message_text(
-                text=list_text,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} ничего не нашел по <b>{query}</b>',
                 parse_mode="HTML",
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
-                reply_markup=kb,
-                business_connection_id=biz,
+                business_connection_id=biz_id,
             )
         except Exception:
             pass
-
-        # Save results in state for callback handler
-        _cmd_state[key] = {
-            "step": "sc_waiting_pick",
-            "data": {
-                "results": results,
-                "status_msg_id": status_msg.message_id,
-                "biz_id": biz,
-            },
-        }
-        return True
-
-    # Text-based number pick fallback (if inline buttons don't work)
-    if state and state["step"] == "sc_waiting_pick":
-        biz = state["data"].get("biz_id", biz_id)
-        await _delete_business_msg(bot, biz, chat_id, message.message_id)
-
-        results = state["data"]["results"]
-        status_msg_id = state["data"].get("status_msg_id")
-
-        try:
-            pick = int(text.strip())
-        except ValueError:
-            return True
-
-        if pick < 1 or pick > len(results):
-            return True
-
-        track = results[pick - 1]
         _cmd_state.pop(key, None)
+        return
 
-        await _sc_download_and_send(bot, biz, chat_id, track, status_msg_id)
-        return True
+    lines = [f'<b>{tg_emoji(Emoji.DOWNLOAD, "⬇")} Результаты по {query}:</b>\n']
+    for i, t in enumerate(results, 1):
+        dur = f" [{_format_duration(t['duration'])}]" if t.get("duration") else ""
+        up = f" — {t['uploader']}" if t.get("uploader") else ""
+        lines.append(f"{i}. {t['title']}{up}{dur}")
 
-    return False
+    buttons = []
+    for i, t in enumerate(results):
+        buttons.append([InlineKeyboardButton(
+            text=f"{i + 1}. {t['title'][:30]}",
+            callback_data=f"sc:pick:{key[0]}:{key[1]}:{i}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="отмена",
+        callback_data=f"sc:cancel:{key[0]}:{key[1]}",
+    )])
+
+    try:
+        await bot.edit_message_text(
+            text="\n".join(lines),
+            parse_mode="HTML",
+            chat_id=chat_id,
+            message_id=status_msg.message_id,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        pass
+
+    _cmd_state[key] = {
+        "step": "sc_waiting_pick",
+        "data": {
+            "results": results,
+            "status_msg_id": status_msg.message_id,
+            "biz_id": biz_id,
+        },
+    }
+
+
+async def _cmd_sc_pick_text(
+    bot: Bot, biz_id: str, chat_id: int, key: tuple, text: str, state: dict
+) -> None:
+    """Handle text-based number pick for SoundCloud."""
+    results = state["data"]["results"]
+    status_msg_id = state["data"].get("status_msg_id")
+    try:
+        pick = int(text)
+    except ValueError:
+        return
+    if pick < 1 or pick > len(results):
+        return
+    track = results[pick - 1]
+    _cmd_state.pop(key, None)
+    await _sc_download_and_send(bot, biz_id, chat_id, track, status_msg_id)
 
 
 async def _sc_download_and_send(
     bot: Bot, biz_id: str, chat_id: int, track: dict, list_msg_id: int | None = None
 ) -> None:
-    """Download a SoundCloud track and send it to the chat."""
-    # Delete the list message
     if list_msg_id:
         await _delete_business_msg(bot, biz_id, chat_id, list_msg_id)
 
-    # Send downloading status
     try:
         dl_msg = await bot.send_message(
             chat_id=chat_id,
-            text=(
-                f'{tg_emoji(Emoji.LOADING, "🔄")} скачиваю '
-                f'<b>{track["title"]}</b>...'
-            ),
+            text=f'{tg_emoji(Emoji.LOADING, "🔄")} скачиваю <b>{track["title"]}</b>...',
             parse_mode="HTML",
             business_connection_id=biz_id,
         )
@@ -512,7 +512,7 @@ async def _sc_download_and_send(
         try:
             await bot.send_message(
                 chat_id=chat_id,
-                text=f'{tg_emoji(Emoji.CROSS, "❌")} не смог отправить',
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не смог отправить файл',
                 parse_mode="HTML",
                 business_connection_id=biz_id,
             )
@@ -527,12 +527,733 @@ async def _sc_download_and_send(
             pass
 
 
-# Callback handler for SoundCloud inline buttons
+# ══════════════════════════════════════════════════════════════════
+# .sv — Video download from any social network
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_sv_start(bot: Bot, biz_id: str, chat_id: int, key: tuple) -> None:
+    try:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'<b>{tg_emoji(Emoji.MEDIA, "🎬")} Скачать видео</b>\n\n'
+                f'{tg_emoji(Emoji.WRITE, "✍")} скинь ссылку на видео\n'
+                f'<i>YouTube, TikTok, Instagram, Twitter, VK...</i>'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+        _cmd_state[key] = {
+            "step": "sv_waiting_url",
+            "data": {"biz_id": biz_id, "prompt_msg_id": msg.message_id},
+        }
+    except Exception:
+        logger.exception("sv_start failed")
+
+
+async def _cmd_sv_download(bot: Bot, biz_id: str, chat_id: int, key: tuple, url: str) -> None:
+    _cmd_state.pop(key, None)
+
+    # Validate URL
+    if not re.match(r'https?://', url, re.IGNORECASE):
+        url = "https://" + url
+
+    try:
+        status_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=f'{tg_emoji(Emoji.LOADING, "🔄")} скачиваю видео...',
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        return
+
+    tmp_dir = tempfile.mkdtemp(prefix="sv_")
+    output_path = os.path.join(tmp_dir, "%(title)s.%(ext)s")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--no-playlist",
+            "-f", "best[filesize<50M]/best",
+            "--merge-output-format", "mp4",
+            "-o", output_path,
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+
+        if proc.returncode != 0:
+            logger.error("yt-dlp video failed: %s", stderr.decode()[:500])
+            try:
+                await bot.edit_message_text(
+                    text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось скачать видео',
+                    parse_mode="HTML",
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return
+
+        # Find downloaded file
+        video_file = None
+        for f in os.listdir(tmp_dir):
+            full = os.path.join(tmp_dir, f)
+            if os.path.isfile(full):
+                video_file = full
+                break
+
+        if not video_file:
+            try:
+                await bot.edit_message_text(
+                    text=f'{tg_emoji(Emoji.CROSS, "❌")} файл не найден после скачивания',
+                    parse_mode="HTML",
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return
+
+        # Check file size (Telegram limit ~50MB)
+        file_size = os.path.getsize(video_file)
+        if file_size > 50 * 1024 * 1024:
+            try:
+                await bot.edit_message_text(
+                    text=f'{tg_emoji(Emoji.CROSS, "❌")} видео слишком большое ({file_size // (1024*1024)}MB)',
+                    parse_mode="HTML",
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    business_connection_id=biz_id,
+                )
+            except Exception:
+                pass
+            return
+
+        await _delete_business_msg(bot, biz_id, chat_id, status_msg.message_id)
+
+        vid = FSInputFile(video_file, filename=os.path.basename(video_file))
+        await bot.send_video(
+            chat_id=chat_id,
+            video=vid,
+            business_connection_id=biz_id,
+        )
+
+    except asyncio.TimeoutError:
+        try:
+            await bot.edit_message_text(
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} таймаут скачивания',
+                parse_mode="HTML",
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("sv download error")
+        try:
+            await bot.edit_message_text(
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} ошибка при скачивании',
+                parse_mode="HTML",
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+    finally:
+        # Cleanup
+        try:
+            for f in os.listdir(tmp_dir):
+                os.unlink(os.path.join(tmp_dir, f))
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .ping — VPN protocol testing
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_ping_start(bot: Bot, biz_id: str, chat_id: int, key: tuple) -> None:
+    try:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'<b>{tg_emoji(Emoji.LOADING, "📡")} VPN Ping</b>\n\n'
+                f'{tg_emoji(Emoji.WRITE, "✍")} скинь протокол (vless://, vmess://, ss://, trojan://, hy2:// и тд)\n\n'
+                f'<i>поддерживаемые: vless, vmess, shadowsocks, trojan, hysteria2, wireguard</i>'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+        _cmd_state[key] = {
+            "step": "ping_waiting",
+            "data": {"biz_id": biz_id, "prompt_msg_id": msg.message_id},
+        }
+    except Exception:
+        logger.exception("ping_start failed")
+
+
+def _parse_vpn_protocol(uri: str) -> dict | None:
+    """Parse VPN protocol URI and extract server info."""
+    uri = uri.strip()
+
+    # Try to extract protocol and host
+    proto_match = re.match(r'^(\w+)://', uri)
+    if not proto_match:
+        return None
+
+    protocol = proto_match.group(1).lower()
+    rest = uri[proto_match.end():]
+
+    # Extract host:port from various formats
+    host = None
+    port = None
+
+    # For vmess:// (base64 encoded JSON)
+    if protocol == "vmess":
+        import base64
+        try:
+            # vmess://base64_json
+            decoded = base64.b64decode(rest + "==").decode("utf-8", errors="ignore")
+            data = json.loads(decoded)
+            host = data.get("add") or data.get("host")
+            port = int(data.get("port", 443))
+            return {"protocol": protocol, "host": host, "port": port, "raw": uri[:80]}
+        except Exception:
+            pass
+
+    # For vless, ss, trojan, hy2 — format: user@host:port?params#remark
+    # or just host:port
+    at_split = rest.split("@", 1)
+    server_part = at_split[-1]  # take part after @ or the whole thing
+
+    # Remove fragment (#remark)
+    server_part = server_part.split("#")[0]
+    # Remove query (?params)
+    server_part = server_part.split("?")[0]
+
+    # Extract host:port
+    hp_match = re.match(r'\[?([^\]\[:]+)\]?:(\d+)', server_part)
+    if hp_match:
+        host = hp_match.group(1)
+        port = int(hp_match.group(2))
+    elif re.match(r'[\w.-]+', server_part):
+        host = server_part.split(":")[0]
+        port = 443
+
+    if host:
+        return {"protocol": protocol, "host": host, "port": port or 443, "raw": uri[:80]}
+    return None
+
+
+async def _cmd_ping_run(bot: Bot, biz_id: str, chat_id: int, key: tuple, protocol_uri: str) -> None:
+    _cmd_state.pop(key, None)
+
+    parsed = _parse_vpn_protocol(protocol_uri)
+    if not parsed:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не могу распарсить протокол\n\nскинь полную ссылку (vless://... vmess://... и тд)',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    host = parsed["host"]
+    port = parsed["port"]
+    protocol = parsed["protocol"]
+
+    try:
+        status_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=f'{tg_emoji(Emoji.LOADING, "🔄")} тестирую <b>{protocol}://{host}:{port}</b>...',
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        return
+
+    results = []
+
+    # 1. ICMP Ping
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ping", "-c", "4", "-W", "3", host,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        ping_output = stdout.decode()
+
+        # Parse ping results
+        rtt_match = re.search(r'rtt min/avg/max/mdev = ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)', ping_output)
+        loss_match = re.search(r'(\d+)% packet loss', ping_output)
+
+        if rtt_match:
+            ping_min = float(rtt_match.group(1))
+            ping_avg = float(rtt_match.group(2))
+            ping_max = float(rtt_match.group(3))
+            loss = loss_match.group(1) if loss_match else "?"
+            results.append(f"📡 <b>Пинг:</b> {ping_avg:.1f}ms (мин {ping_min:.1f} / макс {ping_max:.1f})")
+            results.append(f"📉 <b>Потери:</b> {loss}%")
+        else:
+            results.append("📡 <b>Пинг:</b> хост недоступен")
+    except Exception:
+        results.append("📡 <b>Пинг:</b> таймаут")
+
+    # 2. TCP port check
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bash", "-c", f"timeout 5 bash -c 'echo > /dev/tcp/{host}/{port}' 2>/dev/null && echo OPEN || echo CLOSED",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        port_status = stdout.decode().strip()
+        if "OPEN" in port_status:
+            results.append(f"🔌 <b>Порт {port}:</b> открыт")
+        else:
+            results.append(f"🔌 <b>Порт {port}:</b> закрыт")
+    except Exception:
+        results.append(f"🔌 <b>Порт {port}:</b> не удалось проверить")
+
+    # 3. Download speed test (small file)
+    try:
+        start_time = time.time()
+        proc = await asyncio.create_subprocess_exec(
+            "curl", "-o", "/dev/null", "-w", "%{speed_download}", "--connect-timeout", "5", "--max-time", "10",
+            f"https://{host}:{port}/",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=12)
+        elapsed = time.time() - start_time
+        results.append(f"⏱ <b>Время ответа:</b> {elapsed:.2f}s")
+    except Exception:
+        pass
+
+    # 4. DNS resolution time
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bash", "-c", f"dig +noall +stats {host} 2>/dev/null | grep 'Query time'",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        dns_out = stdout.decode().strip()
+        dns_match = re.search(r'Query time: (\d+)', dns_out)
+        if dns_match:
+            results.append(f"🌐 <b>DNS:</b> {dns_match.group(1)}ms")
+    except Exception:
+        pass
+
+    # Build result message
+    text_lines = [
+        f'<b>{tg_emoji(Emoji.CHECK, "📊")} Результат теста</b>\n',
+        f'<b>Протокол:</b> {protocol.upper()}',
+        f'<b>Сервер:</b> {host}:{port}\n',
+    ] + results
+
+    try:
+        await bot.edit_message_text(
+            text="\n".join(text_lines),
+            parse_mode="HTML",
+            chat_id=chat_id,
+            message_id=status_msg.message_id,
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .gift — Send Telegram gift
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_gift_start(bot: Bot, biz_id: str, chat_id: int, key: tuple) -> None:
+    try:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'<b>{tg_emoji(Emoji.GIFT, "🎁")} Подарок</b>\n\n'
+                f'{tg_emoji(Emoji.WRITE, "✍")} напиши юзернейм кому отправить\n'
+                f'<i>например: @username</i>'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+        _cmd_state[key] = {
+            "step": "gift_waiting_user",
+            "data": {"biz_id": biz_id, "prompt_msg_id": msg.message_id},
+        }
+    except Exception:
+        logger.exception("gift_start failed")
+
+
+async def _cmd_gift_pick_user(bot: Bot, biz_id: str, chat_id: int, key: tuple, username: str) -> None:
+    _cmd_state.pop(key, None)
+
+    # Clean username
+    username = username.strip().lstrip("@")
+    if not username:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} напиши юзернейм',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    # Get available gifts
+    try:
+        gifts_response = await bot.get_available_gifts()
+        gifts = gifts_response.gifts if hasattr(gifts_response, 'gifts') else []
+    except Exception:
+        logger.exception("Failed to get gifts")
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не удалось загрузить подарки',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    if not gifts:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} нет доступных подарков',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    # Show available gifts with inline buttons
+    lines = [f'<b>{tg_emoji(Emoji.GIFT, "🎁")} Подарки для @{username}:</b>\n']
+    buttons = []
+    for i, gift in enumerate(gifts[:10]):
+        star_count = getattr(gift, 'star_count', 0)
+        gift_id = getattr(gift, 'id', str(i))
+        lines.append(f'{i + 1}. {star_count} ⭐')
+        buttons.append([InlineKeyboardButton(
+            text=f"🎁 {star_count} ⭐",
+            callback_data=f"gift:{username}:{gift_id}:{key[0]}:{key[1]}",
+        )])
+
+    buttons.append([InlineKeyboardButton(
+        text="отмена",
+        callback_data=f"gift:cancel:{key[0]}:{key[1]}:0",
+    )])
+
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        logger.exception("Failed to show gifts")
+
+
+# ══════════════════════════════════════════════════════════════════
+# .calc — Calculator
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_calc(bot: Bot, biz_id: str, chat_id: int, expr: str) -> None:
+    # Safe math evaluation
+    allowed = set("0123456789+-*/().% ")
+    if not all(c in allowed for c in expr):
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} только цифры и операторы (+, -, *, /, %)',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        result = eval(expr)  # noqa: S307
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f'{tg_emoji(Emoji.CODE, "🔢")} <b>{expr}</b> = <code>{result}</code>',
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} ошибка в выражении',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .qr — QR Code
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_qr(bot: Bot, biz_id: str, chat_id: int, text: str) -> None:
+    try:
+        import urllib.parse
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&data={urllib.parse.quote(text)}"
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=qr_url,
+            caption=f'{tg_emoji(Emoji.LINK, "🔗")} QR-код',
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        logger.exception("QR failed")
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось создать QR-код',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .weather — Weather
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_weather(bot: Bot, biz_id: str, chat_id: int, city: str) -> None:
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://wttr.in/{city}?format=j1",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    raise ValueError("bad response")
+                data = await resp.json()
+
+        current = data.get("current_condition", [{}])[0]
+        area = data.get("nearest_area", [{}])[0]
+        area_name = area.get("areaName", [{}])[0].get("value", city)
+        country = area.get("country", [{}])[0].get("value", "")
+
+        temp = current.get("temp_C", "?")
+        feels = current.get("FeelsLikeC", "?")
+        humidity = current.get("humidity", "?")
+        wind = current.get("windspeedKmph", "?")
+        desc_list = current.get("lang_ru", current.get("weatherDesc", [{}]))
+        desc = desc_list[0].get("value", "") if desc_list else ""
+
+        text_msg = (
+            f'<b>{tg_emoji(Emoji.GEO, "🌍")} {area_name}, {country}</b>\n\n'
+            f'🌡 <b>Температура:</b> {temp}°C (ощущается {feels}°C)\n'
+            f'💧 <b>Влажность:</b> {humidity}%\n'
+            f'💨 <b>Ветер:</b> {wind} км/ч\n'
+            f'☁ <b>Описание:</b> {desc}'
+        )
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text_msg,
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не нашел погоду для <b>{city}</b>',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .translate — Translate text
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_translate(bot: Bot, biz_id: str, chat_id: int, text: str) -> None:
+    import aiohttp
+
+    # Detect if text is Russian -> translate to English, otherwise -> Russian
+    has_cyrillic = bool(re.search('[а-яА-ЯёЁ]', text))
+    target = "en" if has_cyrillic else "ru"
+    target_name = "English" if has_cyrillic else "Русский"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": text[:500], "langpair": f"{'ru' if has_cyrillic else 'auto'}|{target}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+
+        translated = data.get("responseData", {}).get("translatedText", "")
+        if not translated:
+            raise ValueError("empty translation")
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f'{tg_emoji(Emoji.FONT, "🌐")} <b>Перевод ({target_name}):</b>\n\n'
+                f'<code>{translated}</code>'
+            ),
+            parse_mode="HTML",
+            business_connection_id=biz_id,
+        )
+    except Exception:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось перевести',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .whois — Domain info
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_whois(bot: Bot, biz_id: str, chat_id: int, domain: str) -> None:
+    domain = domain.strip().lower()
+    domain = re.sub(r'^https?://', '', domain)
+    domain = domain.split("/")[0]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "whois", domain,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        output = stdout.decode(errors="ignore")
+
+        # Extract key info
+        info_lines = []
+        for line in output.split("\n"):
+            line = line.strip()
+            for field in ["Domain Name:", "Registrar:", "Creation Date:", "Updated Date:",
+                          "Registry Expiry Date:", "Name Server:", "Registrant Country:"]:
+                if line.upper().startswith(field.upper()):
+                    info_lines.append(line)
+                    break
+
+        if info_lines:
+            result = "\n".join(info_lines[:15])
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.LINK, "🔍")} <b>WHOIS {domain}:</b>\n\n<code>{result}</code>',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        else:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} нет данных для <b>{domain}</b>',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+    except Exception:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} ошибка при запросе WHOIS',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# .short — URL shortener
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _cmd_short(bot: Bot, biz_id: str, chat_id: int, url: str) -> None:
+    import aiohttp
+
+    if not re.match(r'https?://', url, re.IGNORECASE):
+        url = "https://" + url
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://is.gd/create.php?format=simple&url={url}",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                short_url = await resp.text()
+
+        if short_url.startswith("http"):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.LINK, "🔗")} <b>Короткая ссылка:</b>\n\n{short_url}',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        else:
+            raise ValueError("bad response")
+    except Exception:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f'{tg_emoji(Emoji.CROSS, "❌")} не получилось сократить ссылку',
+                parse_mode="HTML",
+                business_connection_id=biz_id,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# Callback handlers
+# ══════════════════════════════════════════════════════════════════
+
+
 @router.callback_query(lambda c: c.data and c.data.startswith("sc:"))
 async def on_sc_callback(callback: CallbackQuery, bot: Bot) -> None:
     """Handle SoundCloud pick/cancel inline button presses."""
-    data = callback.data
-    parts = data.split(":")
+    parts = callback.data.split(":")
 
     if parts[1] == "cancel":
         owner_id = int(parts[2])
@@ -568,11 +1289,39 @@ async def on_sc_callback(callback: CallbackQuery, bot: Bot) -> None:
         await _sc_download_and_send(bot, biz, chat_id, track, status_msg_id)
 
 
-async def _resolve_owner(db: Database, business_id: str) -> int | None:
-    """Find the user_id who owns this business connection."""
-    cur = await db.db.execute(
-        "SELECT user_id FROM users WHERE business_id = ? AND is_connected = 1",
-        (business_id,),
-    )
-    row = await cur.fetchone()
-    return row["user_id"] if row else None
+@router.callback_query(lambda c: c.data and c.data.startswith("gift:"))
+async def on_gift_callback(callback: CallbackQuery, bot: Bot) -> None:
+    """Handle gift selection callback."""
+    parts = callback.data.split(":")
+
+    if parts[1] == "cancel":
+        await callback.answer("отменено")
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        return
+
+    username = parts[1]
+    gift_id = parts[2]
+
+    try:
+        # Resolve username to user_id
+        chat = await bot.get_chat(f"@{username}")
+        user_id = chat.id
+
+        await bot.send_gift(
+            gift_id=gift_id,
+            user_id=user_id,
+        )
+        await callback.answer("подарок отправлен!")
+        try:
+            await callback.message.edit_text(
+                f'{tg_emoji(Emoji.CHECK, "✅")} подарок отправлен @{username}!',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.exception("Failed to send gift")
+        await callback.answer(f"ошибка: {str(e)[:100]}")
