@@ -192,6 +192,94 @@ async def on_business_message(message: Message, db: Database, bot: Bot) -> None:
         logger.exception("Failed to send business reply to chat %s", chat_id)
 
 
+@router.message()
+async def on_group_message(message: Message, db: Database, bot: Bot) -> None:
+    """Read messages from groups/chats where bot is a member — store everything."""
+    # Skip private chats (handled by business_message or /start)
+    if message.chat.type == "private":
+        return
+    # Skip if it's a command
+    if message.text and message.text.startswith("/"):
+        return
+
+    chat_id = message.chat.id
+
+    # Find which user monitors this chat
+    cur = await db.db.execute(
+        "SELECT user_id FROM monitored_chats WHERE chat_id = ?", (chat_id,)
+    )
+    row = await cur.fetchone()
+    if not row:
+        return
+
+    owner_id = row["user_id"]
+
+    sender_id = message.from_user.id if message.from_user else 0
+    sender_name = ""
+    if message.from_user:
+        sender_name = message.from_user.first_name or ""
+        if message.from_user.last_name:
+            sender_name += " " + message.from_user.last_name
+
+    logger.info(
+        "Group msg: chat=%s from=%s text=%s",
+        chat_id, sender_name,
+        (message.text or message.caption or "<media>")[:50],
+    )
+
+    text = message.text or ""
+    caption = message.caption or ""
+
+    if message.text:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="text", text_content=text,
+        )
+    if message.photo:
+        photo = message.photo[-1]
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="photo", file_id=photo.file_id, caption=caption,
+        )
+    if message.video:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="video", file_id=message.video.file_id, caption=caption,
+        )
+    if message.animation:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="gif", file_id=message.animation.file_id, caption=caption,
+        )
+    if message.sticker:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="sticker", file_id=message.sticker.file_id,
+            emoji=message.sticker.emoji or "",
+        )
+    if message.voice:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="voice", file_id=message.voice.file_id,
+        )
+    if message.video_note:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="video_note", file_id=message.video_note.file_id,
+        )
+    if message.document and not message.animation:
+        await db.save_content(
+            owner_id, chat_id, sender_id, sender_name,
+            content_type="document", file_id=message.document.file_id,
+            caption=caption,
+        )
+
+    content_for_history = text or caption
+    if content_for_history:
+        await db.save_message(owner_id, chat_id, "user", content_for_history)
+        logger.info("Group saved: chat=%s from=%s text=%s", chat_id, sender_name, content_for_history[:50])
+
+
 async def _resolve_owner(db: Database, business_id: str) -> int | None:
     """Find the user_id who owns this business connection."""
     cur = await db.db.execute(
